@@ -85,7 +85,17 @@ export default function UfficioPage() {
     await fetch("/api/logout", { method: "POST" });
     window.location.href = "/login";
   }
-
+  async function deletePickup(pickupId: string) {
+    const ok = window.confirm("Sei sicuro di voler eliminare questa richiesta?\nL’operazione è irreversibile.");
+    if (!ok) return;
+  
+    const { error } = await supabase.from("pickups").delete().eq("id", pickupId);
+    if (error) {
+      console.error(error);
+      alert("Errore durante l’eliminazione");
+    }
+  }
+  
   useEffect(() => {
     (async () => {
       setAuthLoading(true);
@@ -187,6 +197,16 @@ export default function UfficioPage() {
                           Chiuso
                         </button>
                       )}
+                      <button
+    style={{
+      ...btnSmall,
+      borderColor: "#e33",
+      color: "#e33",
+    }}
+    onClick={() => deletePickup(p.id)}
+  >
+    Elimina
+  </button>
                     </div>
                   </div>
                 ))}

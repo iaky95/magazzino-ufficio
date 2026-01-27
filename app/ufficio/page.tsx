@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { AppHeader } from "@/components/AppHeader";
+import { ui } from "@/components/uiStyles";
 
 type Pickup = {
   id: string;
@@ -78,24 +80,31 @@ export default function UfficioPage() {
 
   async function setStatus(pickupId: string, status: Pickup["status"]) {
     const { error } = await supabase.from("pickups").update({ status }).eq("id", pickupId);
-    if (error) console.error(error);
+    if (error) {
+      console.error(error);
+      alert("Errore aggiornamento stato");
+    }
+  }
+
+  async function deletePickup(pickupId: string) {
+    const ok = window.confirm("Eliminare questa richiesta?\nL’operazione è irreversibile.");
+    if (!ok) return;
+
+    const { error } = await supabase.from("pickups").delete().eq("id", pickupId);
+    if (error) {
+      console.error(error);
+      alert("Errore durante l’eliminazione");
+      return;
+    }
+
+    await loadPickups();
   }
 
   async function logout() {
     await fetch("/api/logout", { method: "POST" });
     window.location.href = "/login";
   }
-  async function deletePickup(pickupId: string) {
-    const ok = window.confirm("Sei sicuro di voler eliminare questa richiesta?\nL’operazione è irreversibile.");
-    if (!ok) return;
-  
-    const { error } = await supabase.from("pickups").delete().eq("id", pickupId);
-    if (error) {
-      console.error(error);
-      alert("Errore durante l’eliminazione");
-    }
-  }
-  
+
   useEffect(() => {
     (async () => {
       setAuthLoading(true);
@@ -127,50 +136,44 @@ export default function UfficioPage() {
 
   if (authLoading) {
     return (
-      <main style={wrap}>
-        <h1 style={{ margin: 0 }}>Ufficio</h1>
-        <p style={{ color: "#666" }}>Caricamento…</p>
+      <main style={ui.wrap}>
+        <AppHeader title="Ufficio" subtitle="Caricamento…" />
       </main>
     );
   }
 
   return (
-    <main style={wrap}>
-      <header style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
-        <div>
-          <h1 style={{ margin: 0 }}>Ufficio</h1>
-          <p style={{ marginTop: 6, color: "#555" }}>Vedi i prelievi in tempo reale e aggiorna lo stato.</p>
-        </div>
-
-        <button style={btn} onClick={logout}>
-          Esci
-        </button>
-      </header>
+    <main style={ui.wrap}>
+      <AppHeader
+        title="Ufficio"
+        subtitle="Vedi i prelievi in tempo reale e aggiorna lo stato."
+        right={<button style={ui.btnSoft} onClick={logout}>Esci</button>}
+      />
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginTop: 16 }}>
         {columns.map((col) => (
-          <section key={col.key} style={colBox}>
+          <section key={col.key} style={ui.card}>
             <div style={{ fontWeight: 900, marginBottom: 10 }}>{col.title}</div>
 
             <div style={{ display: "grid", gap: 10 }}>
               {pickups
                 .filter((p) => p.status === col.key)
                 .map((p) => (
-                  <div key={p.id} style={card}>
+                  <div key={p.id} style={{ border: "1px solid var(--border)", borderRadius: 14, padding: 12, background: "white" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
                       <div style={{ fontWeight: 900 }}>{p.customer}</div>
-                      <div style={{ fontSize: 12, color: "#666" }}>
+                      <div style={{ fontSize: 12, color: "var(--muted)" }}>
                         {new Date(p.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                       </div>
                     </div>
 
                     {p.created_by && (
-                      <div style={{ marginTop: 6, color: "#555", fontSize: 13 }}>
-                        Inserito da: <b>{p.created_by}</b>
+                      <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
+                        Inserito da: <b style={{ color: "var(--text)" }}>{p.created_by}</b>
                       </div>
                     )}
 
-                    {p.notes && <div style={{ color: "#555", marginTop: 6 }}>Note: {p.notes}</div>}
+                    {p.notes && <div style={{ color: "var(--muted)", marginTop: 6 }}>Note: {p.notes}</div>}
 
                     <ul style={{ margin: "10px 0 0 18px" }}>
                       {p.items.map((i) => (
@@ -183,30 +186,24 @@ export default function UfficioPage() {
 
                     <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
                       {col.key !== "IN_LAVORAZIONE" && (
-                        <button style={btnSmall} onClick={() => setStatus(p.id, "IN_LAVORAZIONE")}>
+                        <button style={ui.btnSmall} onClick={() => setStatus(p.id, "IN_LAVORAZIONE")}>
                           In lavorazione
                         </button>
                       )}
                       {col.key !== "PRONTO" && (
-                        <button style={btnSmall} onClick={() => setStatus(p.id, "PRONTO")}>
+                        <button style={ui.btnSmall} onClick={() => setStatus(p.id, "PRONTO")}>
                           Pronto
                         </button>
                       )}
                       {col.key !== "CHIUSO" && (
-                        <button style={btnSmall} onClick={() => setStatus(p.id, "CHIUSO")}>
+                        <button style={ui.btnSmall} onClick={() => setStatus(p.id, "CHIUSO")}>
                           Chiuso
                         </button>
                       )}
-                      <button
-    style={{
-      ...btnSmall,
-      borderColor: "#e33",
-      color: "#e33",
-    }}
-    onClick={() => deletePickup(p.id)}
-  >
-    Elimina
-  </button>
+
+                      <button style={ui.btnDanger} onClick={() => deletePickup(p.id)}>
+                        Elimina
+                      </button>
                     </div>
                   </div>
                 ))}
@@ -217,9 +214,3 @@ export default function UfficioPage() {
     </main>
   );
 }
-
-const wrap: React.CSSProperties = { padding: 24, fontFamily: "system-ui" };
-const colBox: React.CSSProperties = { border: "1px solid #e6e6e6", borderRadius: 14, padding: 12, minHeight: 320 };
-const card: React.CSSProperties = { border: "1px solid #eee", borderRadius: 12, padding: 12, background: "#fff" };
-const btn: React.CSSProperties = { padding: "10px 12px", borderRadius: 10, border: "1px solid #ddd", background: "#fff", cursor: "pointer" };
-const btnSmall: React.CSSProperties = { padding: "8px 10px", borderRadius: 10, border: "1px solid #ddd", background: "#fff", cursor: "pointer" };

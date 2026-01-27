@@ -2,16 +2,21 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { AppHeader } from "@/components/AppHeader";
+import { ui } from "@/components/uiStyles";
 
-export default function Login() {
-  const r = useRouter();
+export default function LoginPage() {
+  const router = useRouter();
   const [role, setRole] = useState<"magazzino" | "ufficio">("magazzino");
   const [pin, setPin] = useState("");
   const [name, setName] = useState("");
   const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(false);
 
   async function submit() {
     setErr("");
+    setLoading(true);
+
     const res = await fetch("/api/login", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -20,45 +25,62 @@ export default function Login() {
 
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
-      setErr(j?.error ?? "Errore login");
+      setErr(j?.error ?? "PIN non valido");
+      setLoading(false);
       return;
     }
 
-    r.push(role === "magazzino" ? "/magazzino" : "/ufficio");
+    router.push(role === "magazzino" ? "/magazzino" : "/ufficio");
   }
 
   return (
-    <main style={{ padding: 24, fontFamily: "system-ui", maxWidth: 520, margin: "0 auto" }}>
-      <h1>Login</h1>
+    <main style={ui.wrap}>
+      <AppHeader title="Login" subtitle="Inserisci PIN per accedere." />
 
-      <label style={lab}>
-        Ruolo
-        <select value={role} onChange={(e) => setRole(e.target.value as any)} style={inp}>
-          <option value="magazzino">Magazzino</option>
-          <option value="ufficio">Ufficio</option>
-        </select>
-      </label>
-
-      {role === "magazzino" && (
-        <label style={lab}>
-          Nome magazziniere
-          <input value={name} onChange={(e) => setName(e.target.value)} style={inp} placeholder="es. Marco" />
+      <section style={ui.card}>
+        <label style={ui.lab}>
+          Ruolo
+          <select value={role} onChange={(e) => setRole(e.target.value as any)} style={ui.inp}>
+            <option value="magazzino">Magazzino</option>
+            <option value="ufficio">Ufficio</option>
+          </select>
         </label>
-      )}
 
-      <label style={lab}>
-        PIN
-        <input value={pin} onChange={(e) => setPin(e.target.value)} style={inp} placeholder="****" />
-      </label>
+        {role === "magazzino" && (
+          <label style={ui.lab}>
+            Nome magazziniere
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              style={ui.inp}
+              placeholder="es. Marco"
+            />
+          </label>
+        )}
 
-      {err && <div style={{ color: "crimson", marginTop: 10 }}>{err}</div>}
+        <label style={ui.lab}>
+          PIN
+          <input
+            value={pin}
+            onChange={(e) => setPin(e.target.value)}
+            style={ui.inp}
+            placeholder="****"
+          />
+        </label>
 
-      <button onClick={submit} style={btn}>Entra</button>
-      <p style={{ color: "#666", marginTop: 10 }}>Se non hai il PIN, chiedilo all’amministratore.</p>
+        {err && <div style={{ color: "#b91c1c", marginTop: 10, fontWeight: 700 }}>{err}</div>}
+
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 14 }}>
+          <button onClick={submit} style={{ ...ui.btn, opacity: loading ? 0.7 : 1 }} disabled={loading}>
+            {loading ? "Accesso…" : "Entra"}
+          </button>
+        </div>
+
+        <p style={{ color: "var(--muted)", marginTop: 12, fontSize: 13 }}>
+          Se non hai il PIN, chiedilo all’amministratore.
+        </p>
+      </section>
     </main>
   );
-}
-
-const lab: React.CSSProperties = { display: "grid", gap: 6, marginTop: 12 };
-const inp: React.CSSProperties = { padding: "10px 12px", borderRadius: 10, border: "1px solid #ddd" };
-const btn: React.CSSProperties = { marginTop: 14, padding: "10px 12px", borderRadius: 10, border: "1px solid #ddd", background: "#fff", cursor: "pointer" };
+        }
+    

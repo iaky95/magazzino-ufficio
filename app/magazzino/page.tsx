@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { AppHeader } from "@/components/AppHeader";
+import { ui } from "@/components/uiStyles";
 
 type Pickup = {
   id: string;
@@ -157,6 +159,7 @@ export default function MagazzinoPage() {
 
     if (e1) {
       console.error(e1);
+      alert("Errore durante l’invio");
       setSending(false);
       return;
     }
@@ -171,7 +174,10 @@ export default function MagazzinoPage() {
       }));
 
     const { error: e2 } = await supabase.from("pickup_items").insert(cleanItems);
-    if (e2) console.error(e2);
+    if (e2) {
+      console.error(e2);
+      alert("Errore durante il salvataggio dei materiali");
+    }
 
     setCustomer("");
     setPickupNotes("");
@@ -188,46 +194,39 @@ export default function MagazzinoPage() {
 
   if (authLoading) {
     return (
-      <main style={wrap}>
-        <h1 style={{ margin: 0 }}>Magazzino</h1>
-        <p style={{ color: "#666" }}>Caricamento…</p>
+      <main style={ui.wrap}>
+        <AppHeader title="Magazzino" subtitle="Caricamento…" />
       </main>
     );
   }
 
   return (
-    <main style={wrap}>
-      <header style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
-        <div>
-          <h1 style={{ margin: 0 }}>Magazzino</h1>
-          <p style={{ marginTop: 6, color: "#555" }}>
-            Inserisci cosa ha preso il cliente e invia all’ufficio.
-          </p>
-          <div style={{ marginTop: 6, fontSize: 13, color: "#444" }}>
-            Loggato come: <b>{me.name}</b>
-          </div>
+    <main style={ui.wrap}>
+      <AppHeader
+        title="Magazzino"
+        subtitle="Inserisci cosa ha preso il cliente e invia all’ufficio."
+        right={<button style={ui.btnSoft} onClick={logout}>Esci</button>}
+      />
+
+      <section style={ui.card}>
+        <div style={{ color: "var(--muted)", fontSize: 13, marginBottom: 10 }}>
+          Loggato come: <b>{me.name}</b>
         </div>
 
-        <button style={btn} onClick={logout}>
-          Esci
-        </button>
-      </header>
-
-      <section style={card}>
         <div style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: 12 }}>
-          <label style={lab}>
+          <label style={ui.lab}>
             Cliente
-            <input value={customer} onChange={(e) => setCustomer(e.target.value)} style={inp} placeholder="es. Rossi SRL" />
+            <input value={customer} onChange={(e) => setCustomer(e.target.value)} style={ui.inp} placeholder="es. Rossi SRL" />
           </label>
 
-          <label style={lab}>
+          <label style={ui.lab}>
             Note prelievo (opz.)
-            <input value={pickupNotes} onChange={(e) => setPickupNotes(e.target.value)} style={inp} placeholder="es. urgente" />
+            <input value={pickupNotes} onChange={(e) => setPickupNotes(e.target.value)} style={ui.inp} placeholder="es. urgente" />
           </label>
         </div>
 
         <div style={{ marginTop: 14 }}>
-          <div style={{ fontWeight: 800, marginBottom: 8 }}>Materiali</div>
+          <div style={{ fontWeight: 900, marginBottom: 8 }}>Materiali</div>
 
           <datalist id="materials-list">
             {materials.map((m) => (
@@ -239,7 +238,7 @@ export default function MagazzinoPage() {
             {items.map((it, idx) => (
               <div key={idx} style={{ display: "grid", gridTemplateColumns: "1fr 90px 1fr 44px", gap: 10 }}>
                 <input
-                  style={inp}
+                  style={ui.inp}
                   list="materials-list"
                   placeholder="Materiale (scegli o scrivi)"
                   value={it.name}
@@ -248,7 +247,7 @@ export default function MagazzinoPage() {
                   }
                 />
                 <input
-                  style={inp}
+                  style={ui.inp}
                   type="number"
                   min={1}
                   value={it.qty}
@@ -257,7 +256,7 @@ export default function MagazzinoPage() {
                   }
                 />
                 <input
-                  style={inp}
+                  style={ui.inp}
                   placeholder="Note materiale (opz.)"
                   value={it.notes}
                   onChange={(e) =>
@@ -265,7 +264,7 @@ export default function MagazzinoPage() {
                   }
                 />
                 <button
-                  style={miniBtn}
+                  style={ui.btnSmall}
                   onClick={() => setItems((prev) => prev.filter((_, i) => i !== idx))}
                   title="Rimuovi"
                 >
@@ -275,32 +274,30 @@ export default function MagazzinoPage() {
             ))}
           </div>
 
-          <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
-            <button style={btn} onClick={addRow}>
-              + Aggiungi materiale
-            </button>
-            <button style={{ ...btn, opacity: canSend ? 1 : 0.5 }} disabled={!canSend} onClick={sendPickup}>
+          <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
+            <button style={ui.btnSoft} onClick={addRow}>+ Aggiungi materiale</button>
+            <button style={{ ...ui.btn, opacity: canSend ? 1 : 0.5 }} disabled={!canSend} onClick={sendPickup}>
               {sending ? "Invio…" : "Invia all’ufficio"}
             </button>
           </div>
         </div>
       </section>
 
-      <section style={card}>
+      <section style={ui.card}>
         <h2 style={{ marginTop: 0 }}>Ultimi prelievi</h2>
         <div style={{ display: "grid", gap: 10 }}>
           {pickups.map((p) => (
-            <div key={p.id} style={box}>
+            <div key={p.id} style={{ border: "1px solid var(--border)", borderRadius: 14, padding: 12, background: "white" }}>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
                 <div style={{ fontWeight: 900 }}>{p.customer}</div>
-                <div style={badge}>{p.status}</div>
+                <div style={ui.badge}>{p.status}</div>
               </div>
 
-              <div style={{ marginTop: 6, fontSize: 13, color: "#444" }}>
-                Inserito da: <b>{p.created_by || "—"}</b>
+              <div style={{ marginTop: 6, fontSize: 13, color: "var(--muted)" }}>
+                Inserito da: <b style={{ color: "var(--text)" }}>{p.created_by || "—"}</b>
               </div>
 
-              {p.notes && <div style={{ color: "#555", marginTop: 6 }}>Note: {p.notes}</div>}
+              {p.notes && <div style={{ color: "var(--muted)", marginTop: 6 }}>Note: {p.notes}</div>}
 
               <ul style={{ margin: "10px 0 0 18px" }}>
                 {p.items.map((i) => (
@@ -317,12 +314,3 @@ export default function MagazzinoPage() {
     </main>
   );
 }
-
-const wrap: React.CSSProperties = { padding: 24, fontFamily: "system-ui", maxWidth: 1150, margin: "0 auto" };
-const card: React.CSSProperties = { border: "1px solid #e6e6e6", borderRadius: 14, padding: 16, marginTop: 16 };
-const lab: React.CSSProperties = { display: "grid", gap: 6, fontSize: 14 };
-const inp: React.CSSProperties = { padding: "10px 12px", borderRadius: 10, border: "1px solid #ddd", fontSize: 14 };
-const btn: React.CSSProperties = { padding: "10px 12px", borderRadius: 10, border: "1px solid #ddd", background: "#fff", cursor: "pointer" };
-const miniBtn: React.CSSProperties = { borderRadius: 10, border: "1px solid #ddd", background: "#fff", cursor: "pointer" };
-const box: React.CSSProperties = { border: "1px solid #eee", borderRadius: 12, padding: 12 };
-const badge: React.CSSProperties = { padding: "4px 10px", borderRadius: 999, border: "1px solid #ddd", fontSize: 12, background: "#fff" };

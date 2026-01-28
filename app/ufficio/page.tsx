@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import { supabase } from "@/lib/supabase";
 import { AppHeader } from "@/components/AppHeader";
 import { ui } from "@/components/uiStyles";
@@ -25,21 +26,102 @@ type PickupItem = {
   created_at: string;
 };
 
+function ensureBadgeNewAnimationCSS() {
+  if (typeof document === "undefined") return;
+  if (document.getElementById("badge-new-style")) return;
+
+  const style = document.createElement("style");
+  style.id = "badge-new-style";
+  style.innerHTML = `
+    @keyframes pulseNew {
+      0%   { transform: scale(1);    box-shadow: 0 0 0 0 rgba(56,189,248,.55); }
+      70%  { transform: scale(1.05); box-shadow: 0 0 0 10px rgba(56,189,248,0); }
+      100% { transform: scale(1);    box-shadow: 0 0 0 0 rgba(56,189,248,0); }
+    }
+  `;
+  document.head.appendChild(style);
+}
+
 export default function UfficioPage() {
   const [me, setMe] = useState<{ role: string; name: string }>({ role: "", name: "" });
   const [loading, setLoading] = useState(true);
 
   const [pickups, setPickups] = useState<(Pickup & { items: PickupItem[] })[]>([]);
+
   const [notifyEnabled, setNotifyEnabled] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(false);
 
-  // per evitare “spam” notifiche su reload/realtime
+  // evita notifiche duplicate
   const lastNotifiedIdRef = useRef<string>("");
 
-  // audio (suono nuovo ordine)
+  // audio
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const unreadCount = useMemo(() => pickups.filter((p) => p.status === "NUOVO").length, [pickups]);
+  const notifSupported = typeof window !== "undefined" && "Notification" in window;
+
+  function playDing() {
+    if (!soundEnabled) return;
+    try {
+      if (!audioRef.current) {
+        audioRef.current = new Audio("/ding.mp3");
+        audioRef.current.preload = "auto";
+      }
+      audioRef.current.currentTime = 0;
+      void audioRef.current.play();
+    } catch {
+      // ignore
+    }
+  }
+
+  function sendDesktopNotification(p: Pickup) {
+    if (!notifyEnabled) return;
+    if (typeof window === "undefined" || !("Notification" in window)) return;
+    if (Notification.permission !== "granted") return;
+
+    try {
+      const body = `Cliente: ${p.customer}${p.created_by ? `\nInserito da: ${p.created_by}` : ""}`;
+      new Notification("Nuovo ordine in arrivo", { body });
+    } catch {
+      // ignore
+    }
+  }
+
+  async function enableNotificationsAndSound() {
+    // sblocca suono con interazione utente
+    setSoundEnabled(true);
+    try {
+      const a = new Audio("/ding.mp3");
+      a.preload = "auto";
+      a.volume = 1;
+      await a.play().catch(() => {});
+      a.pause();
+      a.currentTime = 0;
+    } catch {
+      // ignore
+    }
+
+    // notifiche desktop
+    if (typeof window !== "undefined" && "Notification" in window) {
+      const perm = await Notification.requestPermission().catch(() => "default" as NotificationPermission);
+      const ok = perm === "granted";
+      setNotifyEnabled(ok);
+
+      try {
+        localStorage.setItem("ufficio_notify", ok ? "1" : "0");
+        localStorage.setItem("ufficio_sound", "1");
+      } catch {
+        // ignore
+      }
+    } else {
+      setNotifyEnabled(false);
+      try {
+        localStorage.setItem("ufficio_sound", "1");
+      } catch {
+        // ignore
+      }
+    }
+  }
 
   async function fetchMeOrRedirect() {
     const r = await fetch("/api/me", { cache: "no-store" });
@@ -71,11 +153,7 @@ export default function UfficioPage() {
       return;
     }
 
-    const { data: it, error: ei } = await supabase
-      .from("pickup_items")
-      .select("*")
-      .in("pickup_id", ids);
-
+    const { data: it, error: ei } = await supabase.from("pickup_items").select("*").in("pickup_id", ids);
     if (ei) {
       console.error(ei);
       return;
@@ -94,121 +172,6 @@ export default function UfficioPage() {
     );
   }
 
-  function playDing() {
-    if (!soundEnabled) return;
-    try {
-      if (!audioRef.current) {
-        audioRef.current = new Audio("/ding.mp3");
-        audioRef.current.preload = "auto";
-      }
-      // reset to start
-      audioRef.current.currentTime = 0;
-      void audioRef.current.play();
-    } catch {
-      // ignore
-    }
-  }
-
-  function sendDesktopNotification(p: Pickup) {
-    if (!notifyEnabled) return;
-    if (typeof window === "undefined" || !("Notification" in window)) return;
-    if (Notification.permission !== "granted") return;
-
-    try {
-      const body = `Cliente: ${p.customer}${p.created_by ? `\nInserito da: ${p.created_by}` : ""}`;
-      new Notification("Nuovo ordine in arrivo", {
-        body,
-        // se vuoi icona notifica: metti /icon.png in public e sblocca qui
-        // icon: "/icon.png",
-      });
-    } catch {
-      // ignore
-    }
-  }
-
-  async function enableNotificationsAndSound() {
-    // abilita suono (serve un click per sbloccare l’audio su molti browser)
-    setSoundEnabled(true);
-    try {
-      const a = new Audio("/ding.mp3");
-      a.preload = "auto";
-      a.volume = 1;
-      await a.play().catch(() => {});
-      a.pause();
-      a.currentTime = 0;
-    } catch {
-      // ignore
-    }
-
-    // abilita notifiche
-    if (typeof window !== "undefined" && "Notification" in window) {
-      const perm = await Notification.requestPermission().catch(() => "default" as NotificationPermission);
-      setNotifyEnabled(perm === "granted");
-      // salva preferenze
-      localStorage.setItem("ufficio_notify", perm === "granted" ? "1" : "0");
-      localStorage.setItem("ufficio_sound", "1");
-    } else {
-      // browser senza Notification API
-      setNotifyEnabled(false);
-      localStorage.setItem("ufficio_sound", "1");
-    }
-  }
-
-  useEffect(() => {
-    // carica preferenze salvate
-    try {
-      const n = localStorage.getItem("ufficio_notify");
-      const s = localStorage.getItem("ufficio_sound");
-      setNotifyEnabled(n === "1");
-      setSoundEnabled(s === "1");
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      const ok = await fetchMeOrRedirect();
-      if (!ok) return;
-
-      await loadPickups();
-      setLoading(false);
-
-      // realtime: quando arriva un nuovo pickup, suono+notifica
-      const ch = supabase
-        .channel("realtime-ufficio-new-orders")
-        .on("postgres_changes", { event: "INSERT", schema: "public", table: "pickups" }, (payload) => {
-          const p = payload.new as Pickup;
-
-          // evita doppie notifiche
-          if (lastNotifiedIdRef.current === p.id) return;
-          lastNotifiedIdRef.current = p.id;
-
-          playDing();
-          sendDesktopNotification(p);
-
-          // aggiorna lista
-          loadPickups();
-        })
-        .on("postgres_changes", { event: "*", schema: "public", table: "pickup_items" }, () => {
-          loadPickups();
-        })
-        .on("postgres_changes", { event: "UPDATE", schema: "public", table: "pickups" }, () => {
-          loadPickups();
-        })
-        .subscribe();
-
-      return () => supabase.removeChannel(ch);
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [notifyEnabled, soundEnabled]);
-
-  async function logout() {
-    await fetch("/api/logout", { method: "POST" });
-    window.location.href = "/login";
-  }
-
   async function setStatus(pickupId: string, status: PickupStatus) {
     const { error } = await supabase.from("pickups").update({ status }).eq("id", pickupId);
     if (error) {
@@ -220,8 +183,6 @@ export default function UfficioPage() {
   }
 
   async function deletePickup(pickupId: string) {
-    // Assumo che tu abbia già implementato delete funzionante:
-    // 1) cancella righe items, 2) cancella pickup
     const { error: e1 } = await supabase.from("pickup_items").delete().eq("pickup_id", pickupId);
     if (e1) {
       console.error(e1);
@@ -237,6 +198,60 @@ export default function UfficioPage() {
     loadPickups();
   }
 
+  async function logout() {
+    await fetch("/api/logout", { method: "POST" });
+    window.location.href = "/login";
+  }
+
+  // preferenze salvate + CSS animazione
+  useEffect(() => {
+    ensureBadgeNewAnimationCSS();
+    try {
+      setNotifyEnabled(localStorage.getItem("ufficio_notify") === "1");
+      setSoundEnabled(localStorage.getItem("ufficio_sound") === "1");
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // init + realtime
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      const ok = await fetchMeOrRedirect();
+      if (!ok) return;
+
+      await loadPickups();
+      setLoading(false);
+
+      const ch = supabase
+        .channel("realtime-ufficio-new-orders")
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "pickups" }, (payload) => {
+          const p = payload.new as Pickup;
+
+          // evita doppie notifiche
+          if (lastNotifiedIdRef.current === p.id) return;
+          lastNotifiedIdRef.current = p.id;
+
+          playDing();
+          sendDesktopNotification(p);
+
+          // refresh lista
+          loadPickups();
+        })
+        .on("postgres_changes", { event: "*", schema: "public", table: "pickup_items" }, () => {
+          loadPickups();
+        })
+        .on("postgres_changes", { event: "UPDATE", schema: "public", table: "pickups" }, () => {
+          loadPickups();
+        })
+        .subscribe();
+
+      return () => supabase.removeChannel(ch);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notifyEnabled, soundEnabled]);
+
   if (loading) {
     return (
       <main style={ui.wrap}>
@@ -244,8 +259,6 @@ export default function UfficioPage() {
       </main>
     );
   }
-
-  const notifSupported = typeof window !== "undefined" && "Notification" in window;
 
   return (
     <main style={ui.wrap}>
@@ -261,16 +274,21 @@ export default function UfficioPage() {
             Loggato come: <b style={{ color: "var(--text)" }}>{me.name}</b>
           </div>
 
-          <div style={{ marginLeft: "auto", display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ marginLeft: "auto", display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
             <button style={ui.btnSoft} onClick={enableNotificationsAndSound}>
               Abilita notifiche & suono
             </button>
 
-            <div style={{ color: "var(--muted)", fontSize: 12, alignSelf: "center" }}>
+            <div style={{ color: "var(--muted)", fontSize: 12 }}>
               {notifSupported ? (
-                <>Notifiche: <b style={{ color: "var(--text)" }}>{notifyEnabled ? "ON" : "OFF"}</b> · Suono: <b style={{ color: "var(--text)" }}>{soundEnabled ? "ON" : "OFF"}</b></>
+                <>
+                  Notifiche: <b style={{ color: "var(--text)" }}>{notifyEnabled ? "ON" : "OFF"}</b> · Suono:{" "}
+                  <b style={{ color: "var(--text)" }}>{soundEnabled ? "ON" : "OFF"}</b>
+                </>
               ) : (
-                <>Notifiche non supportate dal browser · Suono: <b style={{ color: "var(--text)" }}>{soundEnabled ? "ON" : "OFF"}</b></>
+                <>
+                  Notifiche non supportate · Suono: <b style={{ color: "var(--text)" }}>{soundEnabled ? "ON" : "OFF"}</b>
+                </>
               )}
             </div>
           </div>
@@ -296,7 +314,10 @@ export default function UfficioPage() {
               }}
             >
               <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
-                <div style={{ fontWeight: 900, fontSize: 16 }}>{p.customer}</div>
+                <div style={badgeWrap}>
+                  <div style={{ fontWeight: 900, fontSize: 16 }}>{p.customer}</div>
+                  {p.status === "NUOVO" && <span style={badgeNew}>NUOVO</span>}
+                </div>
                 <div style={ui.badge}>{p.status}</div>
               </div>
 
@@ -339,3 +360,22 @@ export default function UfficioPage() {
     </main>
   );
 }
+
+/* ====== STILI ====== */
+
+const badgeWrap: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+};
+
+const badgeNew: CSSProperties = {
+  display: "inline-block",
+  padding: "4px 10px",
+  borderRadius: 999,
+  fontSize: 12,
+  fontWeight: 900,
+  color: "white",
+  background: "linear-gradient(135deg, #2563eb, #38bdf8)",
+  animation: "pulseNew 1.6s infinite",
+};

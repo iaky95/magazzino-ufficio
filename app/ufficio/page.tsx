@@ -38,8 +38,27 @@ function ensureBadgeNewAnimationCSS() {
       70%  { transform: scale(1.05); box-shadow: 0 0 0 10px rgba(56,189,248,0); }
       100% { transform: scale(1);    box-shadow: 0 0 0 0 rgba(56,189,248,0); }
     }
+    @keyframes toastIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
   `;
   document.head.appendChild(style);
+}
+
+function statusRank(s: PickupStatus) {
+  switch (s) {
+    case "NUOVO":
+      return 0;
+    case "IN_LAVORAZIONE":
+      return 1;
+    case "PRONTO":
+      return 2;
+    case "CHIUSO":
+      return 3; // in fondo
+    default:
+      return 9;
+  }
 }
 
 export default function UfficioPage() {
@@ -54,8 +73,32 @@ export default function UfficioPage() {
   const lastNotifiedIdRef = useRef<string>("");
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
+  // ✅ toast
+  const [toast, setToast] = useState<string>("");
+  const toastTimerRef = useRef<number | null>(null);
+
   const unreadCount = useMemo(() => pickups.filter((p) => p.status === "NUOVO").length, [pickups]);
   const notifSupported = typeof window !== "undefined" && "Notification" in window;
+
+  const sortedPickups = useMemo(() => {
+    const copy = [...pickups];
+    copy.sort((a, b) => {
+      const ra = statusRank(a.status);
+      const rb = statusRank(b.status);
+      if (ra !== rb) return ra - rb;
+
+      const ta = new Date(a.created_at).getTime();
+      const tb = new Date(b.created_at).getTime();
+      return tb - ta;
+    });
+    return copy;
+  }, [pickups]);
+
+  function showToast(msg: string) {
+    setToast(msg);
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => setToast(""), 2200);
+  }
 
   function playDing() {
     if (!soundEnabled) return;
@@ -85,8 +128,9 @@ export default function UfficioPage() {
   }
 
   async function enableNotificationsAndSound() {
-    // sblocca audio con interazione utente
     setSoundEnabled(true);
+
+    // sblocca audio con click
     try {
       const a = new Audio("/ding.mp3");
       a.preload = "auto";
@@ -98,7 +142,6 @@ export default function UfficioPage() {
       // ignore
     }
 
-    // notifiche
     if (typeof window !== "undefined" && "Notification" in window) {
       const perm = await Notification.requestPermission().catch(() => "default" as NotificationPermission);
       const ok = perm === "granted";
@@ -118,6 +161,8 @@ export default function UfficioPage() {
         // ignore
       }
     }
+
+    showToast("Notifiche/Suono configurati");
   }
 
   async function fetchMeOrRedirect() {
@@ -137,7 +182,7 @@ export default function UfficioPage() {
       .from("pickups")
       .select("*")
       .order("created_at", { ascending: false })
-      .limit(60);
+      .limit(80);
 
     if (ep) {
       console.error(ep);
@@ -176,7 +221,12 @@ export default function UfficioPage() {
       alert("Errore aggiornamento stato");
       return;
     }
-    loadPickups();
+
+    // refresh
+    await loadPickups();
+
+    // ✅ toast quando chiuso
+    if (status === "CHIUSO") showToast("Ordine spostato in fondo");
   }
 
   async function deletePickup(pickupId: string) {
@@ -193,6 +243,7 @@ export default function UfficioPage() {
       return;
     }
     loadPickups();
+    showToast("Richiesta eliminata");
   }
 
   async function logout() {
@@ -230,6 +281,8 @@ export default function UfficioPage() {
           playDing();
           sendDesktopNotification(p);
           loadPickups();
+
+          showToast("Nuovo ordine ricevuto");
         })
         .on("postgres_changes", { event: "*", schema: "public", table: "pickup_items" }, () => loadPickups())
         .on("postgres_changes", { event: "UPDATE", schema: "public", table: "pickups" }, () => loadPickups())
@@ -250,10 +303,17 @@ export default function UfficioPage() {
 
   return (
     <main style={ui.wrap}>
+      {/* ✅ Toast */}
+      {toast && <div style={toastStyle}>{toast}</div>}
+
       <AppHeader
         title="Ufficio"
         subtitle={`Ordini in arrivo. Nuovi: ${unreadCount}`}
-        right={<button style={ui.btnSoft} onClick={logout}>Esci</button>}
+        right={
+          <button style={ui.btnSoft} onClick={logout}>
+            Esci
+          </button>
+        }
       />
 
       <section style={ui.card}>
@@ -268,7 +328,7 @@ export default function UfficioPage() {
             </button>
 
             <div style={{ color: "var(--muted)", fontSize: 12 }}>
-              {notifSupported ? (
+              {typeof window !== "undefined" && "Notification" in window ? (
                 <>
                   Notifiche: <b style={{ color: "var(--text)" }}>{notifyEnabled ? "ON" : "OFF"}</b> · Suono:{" "}
                   <b style={{ color: "var(--text)" }}>{soundEnabled ? "ON" : "OFF"}</b>
@@ -291,7 +351,7 @@ export default function UfficioPage() {
         <h2 style={{ marginTop: 0 }}>Richieste</h2>
 
         <div style={{ display: "grid", gap: 10 }}>
-          {pickups.map((p) => (
+          {sortedPickups.map((p) => (
             <div
               key={p.id}
               style={{
@@ -359,28 +419,22 @@ export default function UfficioPage() {
                   }}
                 >
                   <div style={{ fontWeight: 900, color: "var(--text)" }}>Ordine chiuso</div>
-
                   <div>
                     Cliente: <b style={{ color: "var(--text)" }}>{p.customer}</b>
                   </div>
-
                   <div>
                     Inserito da: <b style={{ color: "var(--text)" }}>{p.created_by || "—"}</b>
                   </div>
-
                   <div style={{ fontSize: 12 }}>
                     Stato finale: <b>{p.status}</b>
                   </div>
-
-                  <div style={{ fontSize: 12 }}>
-                    (Spazio pronto per: note finali, timestamp, firma, archivio…)
-                  </div>
+                  <div style={{ fontSize: 12 }}>(Spazio pronto per note finali / archivio)</div>
                 </div>
               )}
             </div>
           ))}
 
-          {pickups.length === 0 && <div style={{ color: "var(--muted)" }}>Nessuna richiesta.</div>}
+          {sortedPickups.length === 0 && <div style={{ color: "var(--muted)" }}>Nessuna richiesta.</div>}
         </div>
       </section>
     </main>
@@ -404,4 +458,21 @@ const badgeNew: CSSProperties = {
   color: "white",
   background: "linear-gradient(135deg, #2563eb, #38bdf8)",
   animation: "pulseNew 1.6s infinite",
+};
+
+const toastStyle: CSSProperties = {
+  position: "fixed",
+  left: "50%",
+  top: 14,
+  transform: "translateX(-50%)",
+  zIndex: 9999,
+  padding: "10px 14px",
+  borderRadius: 14,
+  border: "1px solid var(--border)",
+  background: "rgba(255,255,255,.92)",
+  backdropFilter: "blur(8px)",
+  boxShadow: "var(--shadow)",
+  fontWeight: 800,
+  color: "var(--text)",
+  animation: "toastIn .18s ease-out",
 };

@@ -21,7 +21,7 @@ type PickupItem = {
   id: string;
   pickup_id: string;
   name: string;
-  qty: number;
+  qty: number; // ✅ decimale
   notes: string;
   created_at: string;
 };
@@ -47,7 +47,6 @@ function ensureGlobalCSS() {
 }
 
 function statusRank(s: PickupStatus) {
-  // più piccolo = più in alto
   switch (s) {
     case "NUOVO":
       return 0;
@@ -62,6 +61,11 @@ function statusRank(s: PickupStatus) {
   }
 }
 
+function formatQty(n: number) {
+  if (!Number.isFinite(n)) return "0";
+  return n.toFixed(3).replace(/\.?0+$/, "");
+}
+
 export default function UfficioPage() {
   const [me, setMe] = useState<{ role: string; name: string }>({ role: "", name: "" });
   const [loading, setLoading] = useState(true);
@@ -74,7 +78,7 @@ export default function UfficioPage() {
   // sezione chiusi collassabile
   const [closedOpen, setClosedOpen] = useState(false);
 
-  // anti-duplicati notifiche
+  // anti-duplicati notifica
   const lastNotifiedIdRef = useRef<string>("");
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -91,20 +95,14 @@ export default function UfficioPage() {
       const ra = statusRank(a.status);
       const rb = statusRank(b.status);
       if (ra !== rb) return ra - rb;
-      const ta = new Date(a.created_at).getTime();
-      const tb = new Date(b.created_at).getTime();
-      return tb - ta; // più recenti sopra
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
     });
     return list;
   }, [pickups]);
 
   const closedPickups = useMemo(() => {
     const list = pickups.filter((p) => p.status === "CHIUSO");
-    list.sort((a, b) => {
-      const ta = new Date(a.created_at).getTime();
-      const tb = new Date(b.created_at).getTime();
-      return tb - ta; // più recenti chiusi sopra (ma stanno in fondo nella sezione)
-    });
+    list.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
     return list;
   }, [pickups]);
 
@@ -196,7 +194,7 @@ export default function UfficioPage() {
       .from("pickups")
       .select("*")
       .order("created_at", { ascending: false })
-      .limit(120);
+      .limit(150);
 
     if (ep) {
       console.error(ep);
@@ -238,11 +236,7 @@ export default function UfficioPage() {
 
     await loadPickups();
 
-    if (status === "CHIUSO") {
-      showToast("Ordine spostato nei chiusi");
-      // opzionale: apri automaticamente la sezione chiusi (se vuoi toglilo)
-      // setClosedOpen(true);
-    }
+    if (status === "CHIUSO") showToast("Ordine spostato nei chiusi");
   }
 
   async function deletePickup(pickupId: string) {
@@ -258,7 +252,7 @@ export default function UfficioPage() {
       alert("Errore eliminazione richiesta");
       return;
     }
-    loadPickups();
+    await loadPickups();
     showToast("Richiesta eliminata");
   }
 
@@ -287,7 +281,7 @@ export default function UfficioPage() {
       setLoading(false);
 
       const ch = supabase
-        .channel("realtime-ufficio-new-orders")
+        .channel("realtime-ufficio-orders")
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "pickups" }, (payload) => {
           const p = payload.new as Pickup;
 
@@ -357,7 +351,8 @@ export default function UfficioPage() {
                 </>
               ) : (
                 <>
-                  Notifiche non supportate · Suono: <b style={{ color: "var(--text)" }}>{soundEnabled ? "ON" : "OFF"}</b>
+                  Notifiche non supportate · Suono:{" "}
+                  <b style={{ color: "var(--text)" }}>{soundEnabled ? "ON" : "OFF"}</b>
                 </>
               )}
             </div>
@@ -406,7 +401,7 @@ export default function UfficioPage() {
               <ul style={{ margin: "10px 0 0 18px" }}>
                 {p.items.map((i) => (
                   <li key={i.id}>
-                    {i.qty}× {i.name}
+                    {formatQty(i.qty)}× {i.name}
                     {i.notes ? ` — (${i.notes})` : ""}
                   </li>
                 ))}
@@ -438,23 +433,14 @@ export default function UfficioPage() {
         <button
           type="button"
           onClick={() => setClosedOpen((v) => !v)}
-          style={{
-            width: "100%",
-            textAlign: "left",
-            padding: 0,
-            border: "none",
-            background: "transparent",
-            cursor: "pointer",
-          }}
+          style={{ width: "100%", textAlign: "left", padding: 0, border: "none", background: "transparent", cursor: "pointer" }}
         >
           <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
             <h2 style={{ margin: 0 }}>
               Ordini chiusi{" "}
               <span style={{ color: "var(--muted)", fontWeight: 700, fontSize: 14 }}>({closedPickups.length})</span>
             </h2>
-            <div style={{ color: "var(--muted)", fontSize: 13 }}>
-              {closedOpen ? "Nascondi ▲" : "Mostra ▼"}
-            </div>
+            <div style={{ color: "var(--muted)", fontSize: 13 }}>{closedOpen ? "Nascondi ▲" : "Mostra ▼"}</div>
           </div>
         </button>
 
@@ -470,7 +456,7 @@ export default function UfficioPage() {
                   background: "white",
                   display: "grid",
                   gap: 14,
-                  gridTemplateColumns: "1fr 280px", // ✅ 2 colonne solo qui (sono tutti chiusi)
+                  gridTemplateColumns: "1fr 280px",
                   alignItems: "start",
                 }}
               >
@@ -490,7 +476,7 @@ export default function UfficioPage() {
                   <ul style={{ margin: "10px 0 0 18px" }}>
                     {p.items.map((i) => (
                       <li key={i.id}>
-                        {i.qty}× {i.name}
+                        {formatQty(i.qty)}× {i.name}
                         {i.notes ? ` — (${i.notes})` : ""}
                       </li>
                     ))}
@@ -518,19 +504,15 @@ export default function UfficioPage() {
                   }}
                 >
                   <div style={{ fontWeight: 900, color: "var(--text)" }}>Ordine chiuso</div>
-
                   <div>
                     Cliente: <b style={{ color: "var(--text)" }}>{p.customer}</b>
                   </div>
-
                   <div>
                     Inserito da: <b style={{ color: "var(--text)" }}>{p.created_by || "—"}</b>
                   </div>
-
                   <div style={{ fontSize: 12 }}>
                     Stato finale: <b>{p.status}</b>
                   </div>
-
                   <div style={{ fontSize: 12 }}>(Spazio pronto per note finali / archivio)</div>
                 </div>
               </div>

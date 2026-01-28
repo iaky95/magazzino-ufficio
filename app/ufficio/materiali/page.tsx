@@ -134,27 +134,34 @@ export default function UfficioMaterialiPage() {
 
   // ✅ DELETE vero via API server (service role), così non “ricompare”
   async function deleteMaterial(id: string) {
+    const ok = window.confirm(
+      "Sei sicuro di voler eliminare questo materiale?\n\nL'operazione è irreversibile."
+    );
+  
+    if (!ok) return;
+  
     setBusyId(id);
     setMsg(null);
-
+  
     const r = await fetch("/api/materials/delete", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id }),
     });
-
+  
     const j = await r.json().catch(() => ({}));
-
+  
     if (!r.ok) {
       setMsg({ type: "err", text: `Errore eliminazione: ${j.error || "sconosciuto"}` });
       setBusyId("");
       return;
     }
-
+  
     setMsg({ type: "ok", text: "Materiale eliminato." });
     await loadMaterials();
     setBusyId("");
   }
+  
 
   async function logout() {
     await fetch("/api/logout", { method: "POST" });

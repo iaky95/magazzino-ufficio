@@ -26,12 +26,12 @@ type PickupItem = {
   created_at: string;
 };
 
-function ensureBadgeNewAnimationCSS() {
+function ensureGlobalCSS() {
   if (typeof document === "undefined") return;
-  if (document.getElementById("badge-new-style")) return;
+  if (document.getElementById("ufficio-global-style")) return;
 
   const style = document.createElement("style");
-  style.id = "badge-new-style";
+  style.id = "ufficio-global-style";
   style.innerHTML = `
     @keyframes pulseNew {
       0%   { transform: scale(1);    box-shadow: 0 0 0 0 rgba(56,189,248,.55); }
@@ -47,6 +47,7 @@ function ensureBadgeNewAnimationCSS() {
 }
 
 function statusRank(s: PickupStatus) {
+  // più piccolo = più in alto
   switch (s) {
     case "NUOVO":
       return 0;
@@ -55,7 +56,7 @@ function statusRank(s: PickupStatus) {
     case "PRONTO":
       return 2;
     case "CHIUSO":
-      return 3; // in fondo
+      return 3;
     default:
       return 9;
   }
@@ -70,28 +71,41 @@ export default function UfficioPage() {
   const [notifyEnabled, setNotifyEnabled] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(false);
 
+  // sezione chiusi collassabile
+  const [closedOpen, setClosedOpen] = useState(false);
+
+  // anti-duplicati notifiche
   const lastNotifiedIdRef = useRef<string>("");
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  // ✅ toast
+  // toast
   const [toast, setToast] = useState<string>("");
   const toastTimerRef = useRef<number | null>(null);
 
-  const unreadCount = useMemo(() => pickups.filter((p) => p.status === "NUOVO").length, [pickups]);
   const notifSupported = typeof window !== "undefined" && "Notification" in window;
+  const unreadCount = useMemo(() => pickups.filter((p) => p.status === "NUOVO").length, [pickups]);
 
-  const sortedPickups = useMemo(() => {
-    const copy = [...pickups];
-    copy.sort((a, b) => {
+  const openPickups = useMemo(() => {
+    const list = pickups.filter((p) => p.status !== "CHIUSO");
+    list.sort((a, b) => {
       const ra = statusRank(a.status);
       const rb = statusRank(b.status);
       if (ra !== rb) return ra - rb;
-
       const ta = new Date(a.created_at).getTime();
       const tb = new Date(b.created_at).getTime();
-      return tb - ta;
+      return tb - ta; // più recenti sopra
     });
-    return copy;
+    return list;
+  }, [pickups]);
+
+  const closedPickups = useMemo(() => {
+    const list = pickups.filter((p) => p.status === "CHIUSO");
+    list.sort((a, b) => {
+      const ta = new Date(a.created_at).getTime();
+      const tb = new Date(b.created_at).getTime();
+      return tb - ta; // più recenti chiusi sopra (ma stanno in fondo nella sezione)
+    });
+    return list;
   }, [pickups]);
 
   function showToast(msg: string) {
@@ -182,7 +196,7 @@ export default function UfficioPage() {
       .from("pickups")
       .select("*")
       .order("created_at", { ascending: false })
-      .limit(80);
+      .limit(120);
 
     if (ep) {
       console.error(ep);
@@ -222,11 +236,13 @@ export default function UfficioPage() {
       return;
     }
 
-    // refresh
     await loadPickups();
 
-    // ✅ toast quando chiuso
-    if (status === "CHIUSO") showToast("Ordine spostato in fondo");
+    if (status === "CHIUSO") {
+      showToast("Ordine spostato nei chiusi");
+      // opzionale: apri automaticamente la sezione chiusi (se vuoi toglilo)
+      // setClosedOpen(true);
+    }
   }
 
   async function deletePickup(pickupId: string) {
@@ -252,7 +268,7 @@ export default function UfficioPage() {
   }
 
   useEffect(() => {
-    ensureBadgeNewAnimationCSS();
+    ensureGlobalCSS();
     try {
       setNotifyEnabled(localStorage.getItem("ufficio_notify") === "1");
       setSoundEnabled(localStorage.getItem("ufficio_sound") === "1");
@@ -281,7 +297,6 @@ export default function UfficioPage() {
           playDing();
           sendDesktopNotification(p);
           loadPickups();
-
           showToast("Nuovo ordine ricevuto");
         })
         .on("postgres_changes", { event: "*", schema: "public", table: "pickup_items" }, () => loadPickups())
@@ -303,7 +318,6 @@ export default function UfficioPage() {
 
   return (
     <main style={ui.wrap}>
-      {/* ✅ Toast */}
       {toast && <div style={toastStyle}>{toast}</div>}
 
       <AppHeader
@@ -328,7 +342,7 @@ export default function UfficioPage() {
             </button>
 
             <div style={{ color: "var(--muted)", fontSize: 12 }}>
-              {typeof window !== "undefined" && "Notification" in window ? (
+              {notifSupported ? (
                 <>
                   Notifiche: <b style={{ color: "var(--text)" }}>{notifyEnabled ? "ON" : "OFF"}</b> · Suono:{" "}
                   <b style={{ color: "var(--text)" }}>{soundEnabled ? "ON" : "OFF"}</b>
@@ -347,11 +361,17 @@ export default function UfficioPage() {
         </div>
       </section>
 
+      {/* ORDINI APERTI */}
       <section style={ui.card}>
-        <h2 style={{ marginTop: 0 }}>Richieste</h2>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
+          <h2 style={{ margin: 0 }}>Ordini aperti</h2>
+          <div style={{ color: "var(--muted)", fontSize: 13 }}>
+            Totale: <b style={{ color: "var(--text)" }}>{openPickups.length}</b>
+          </div>
+        </div>
 
-        <div style={{ display: "grid", gap: 10 }}>
-          {sortedPickups.map((p) => (
+        <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
+          {openPickups.map((p) => (
             <div
               key={p.id}
               style={{
@@ -359,55 +379,126 @@ export default function UfficioPage() {
                 borderRadius: 14,
                 padding: 12,
                 background: "white",
-                display: "grid",
-                gap: 14,
-                gridTemplateColumns: p.status === "CHIUSO" ? "1fr 280px" : "1fr",
-                alignItems: "start",
               }}
             >
-              {/* COLONNA 1 */}
-              <div>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
-                  <div style={badgeWrap}>
-                    <div style={{ fontWeight: 900, fontSize: 16 }}>{p.customer}</div>
-                    {p.status === "NUOVO" && <span style={badgeNew}>NUOVO</span>}
-                  </div>
-                  <div style={ui.badge}>{p.status}</div>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
+                <div style={badgeWrap}>
+                  <div style={{ fontWeight: 900, fontSize: 16 }}>{p.customer}</div>
+                  {p.status === "NUOVO" && <span style={badgeNew}>NUOVO</span>}
                 </div>
-
-                <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
-                  Inserito da: <b style={{ color: "var(--text)" }}>{p.created_by || "—"}</b>
-                </div>
-
-                {p.notes && <div style={{ marginTop: 6, color: "var(--muted)" }}>Note: {p.notes}</div>}
-
-                <ul style={{ margin: "10px 0 0 18px" }}>
-                  {p.items.map((i) => (
-                    <li key={i.id}>
-                      {i.qty}× {i.name}
-                      {i.notes ? ` — (${i.notes})` : ""}
-                    </li>
-                  ))}
-                </ul>
-
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
-                  <button style={ui.btnSoft} onClick={() => setStatus(p.id, "IN_LAVORAZIONE")}>
-                    In lavorazione
-                  </button>
-                  <button style={ui.btnSoft} onClick={() => setStatus(p.id, "PRONTO")}>
-                    Pronto
-                  </button>
-                  <button style={ui.btnSoft} onClick={() => setStatus(p.id, "CHIUSO")}>
-                    Chiuso
-                  </button>
-                  <button style={ui.btnDanger} onClick={() => deletePickup(p.id)}>
-                    Elimina
-                  </button>
-                </div>
+                <div style={ui.badge}>{p.status}</div>
               </div>
 
-              {/* COLONNA 2 (solo CHIUSO) */}
-              {p.status === "CHIUSO" && (
+              <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
+                Inserito da: <b style={{ color: "var(--text)" }}>{p.created_by || "—"}</b>
+              </div>
+
+              {p.notes && <div style={{ marginTop: 6, color: "var(--muted)" }}>Note: {p.notes}</div>}
+
+              <ul style={{ margin: "10px 0 0 18px" }}>
+                {p.items.map((i) => (
+                  <li key={i.id}>
+                    {i.qty}× {i.name}
+                    {i.notes ? ` — (${i.notes})` : ""}
+                  </li>
+                ))}
+              </ul>
+
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
+                <button style={ui.btnSoft} onClick={() => setStatus(p.id, "IN_LAVORAZIONE")}>
+                  In lavorazione
+                </button>
+                <button style={ui.btnSoft} onClick={() => setStatus(p.id, "PRONTO")}>
+                  Pronto
+                </button>
+                <button style={ui.btnSoft} onClick={() => setStatus(p.id, "CHIUSO")}>
+                  Chiuso
+                </button>
+                <button style={ui.btnDanger} onClick={() => deletePickup(p.id)}>
+                  Elimina
+                </button>
+              </div>
+            </div>
+          ))}
+
+          {openPickups.length === 0 && <div style={{ color: "var(--muted)" }}>Nessun ordine aperto.</div>}
+        </div>
+      </section>
+
+      {/* ORDINI CHIUSI (COLLASSABILE) */}
+      <section style={ui.card}>
+        <button
+          type="button"
+          onClick={() => setClosedOpen((v) => !v)}
+          style={{
+            width: "100%",
+            textAlign: "left",
+            padding: 0,
+            border: "none",
+            background: "transparent",
+            cursor: "pointer",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
+            <h2 style={{ margin: 0 }}>
+              Ordini chiusi{" "}
+              <span style={{ color: "var(--muted)", fontWeight: 700, fontSize: 14 }}>({closedPickups.length})</span>
+            </h2>
+            <div style={{ color: "var(--muted)", fontSize: 13 }}>
+              {closedOpen ? "Nascondi ▲" : "Mostra ▼"}
+            </div>
+          </div>
+        </button>
+
+        {closedOpen && (
+          <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
+            {closedPickups.map((p) => (
+              <div
+                key={p.id}
+                style={{
+                  border: "1px solid var(--border)",
+                  borderRadius: 14,
+                  padding: 12,
+                  background: "white",
+                  display: "grid",
+                  gap: 14,
+                  gridTemplateColumns: "1fr 280px", // ✅ 2 colonne solo qui (sono tutti chiusi)
+                  alignItems: "start",
+                }}
+              >
+                {/* colonna 1 */}
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
+                    <div style={{ fontWeight: 900, fontSize: 16 }}>{p.customer}</div>
+                    <div style={ui.badge}>{p.status}</div>
+                  </div>
+
+                  <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
+                    Inserito da: <b style={{ color: "var(--text)" }}>{p.created_by || "—"}</b>
+                  </div>
+
+                  {p.notes && <div style={{ marginTop: 6, color: "var(--muted)" }}>Note: {p.notes}</div>}
+
+                  <ul style={{ margin: "10px 0 0 18px" }}>
+                    {p.items.map((i) => (
+                      <li key={i.id}>
+                        {i.qty}× {i.name}
+                        {i.notes ? ` — (${i.notes})` : ""}
+                      </li>
+                    ))}
+                  </ul>
+
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
+                    <button style={ui.btnSoft} onClick={() => setStatus(p.id, "IN_LAVORAZIONE")}>
+                      Riapri (in lavorazione)
+                    </button>
+                    <button style={ui.btnDanger} onClick={() => deletePickup(p.id)}>
+                      Elimina
+                    </button>
+                  </div>
+                </div>
+
+                {/* colonna 2 */}
                 <div
                   style={{
                     borderLeft: "1px dashed var(--border)",
@@ -419,23 +510,27 @@ export default function UfficioPage() {
                   }}
                 >
                   <div style={{ fontWeight: 900, color: "var(--text)" }}>Ordine chiuso</div>
+
                   <div>
                     Cliente: <b style={{ color: "var(--text)" }}>{p.customer}</b>
                   </div>
+
                   <div>
                     Inserito da: <b style={{ color: "var(--text)" }}>{p.created_by || "—"}</b>
                   </div>
+
                   <div style={{ fontSize: 12 }}>
                     Stato finale: <b>{p.status}</b>
                   </div>
+
                   <div style={{ fontSize: 12 }}>(Spazio pronto per note finali / archivio)</div>
                 </div>
-              )}
-            </div>
-          ))}
+              </div>
+            ))}
 
-          {sortedPickups.length === 0 && <div style={{ color: "var(--muted)" }}>Nessuna richiesta.</div>}
-        </div>
+            {closedPickups.length === 0 && <div style={{ color: "var(--muted)" }}>Nessun ordine chiuso.</div>}
+          </div>
+        )}
       </section>
     </main>
   );

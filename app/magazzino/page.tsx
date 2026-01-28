@@ -24,6 +24,28 @@ type CartItem = {
   qty: number; // ✅ decimale
 };
 
+function ensureMobileCartCSS() {
+  if (typeof document === "undefined") return;
+  if (document.getElementById("mobile-cart-style")) return;
+
+  const style = document.createElement("style");
+  style.id = "mobile-cart-style";
+  style.innerHTML = `
+    /* spazio extra in fondo su mobile per non coprire contenuti */
+    @media (max-width: 820px) {
+      .mobileBottomPad { padding-bottom: 84px !important; }
+      .desktopCartBtn { display: none !important; }
+      .mobileCartBar { display: flex !important; }
+    }
+    @media (min-width: 821px) {
+      .mobileBottomPad { padding-bottom: 0 !important; }
+      .desktopCartBtn { display: inline-flex !important; }
+      .mobileCartBar { display: none !important; }
+    }
+  `;
+  document.head.appendChild(style);
+}
+
 function parseQty(input: string) {
   const v = (input ?? "").trim().replace(",", ".");
   const n = parseFloat(v);
@@ -32,9 +54,7 @@ function parseQty(input: string) {
 
 function formatQty(n: number) {
   if (!Number.isFinite(n)) return "0";
-  // max 3 decimali, togli zeri finali
-  const s = n.toFixed(3).replace(/\.?0+$/, "");
-  return s;
+  return n.toFixed(3).replace(/\.?0+$/, "");
 }
 
 function vibrate(ms = 12) {
@@ -51,11 +71,10 @@ export default function MagazzinoPage() {
   const [me, setMe] = useState<{ role: string; name: string }>({ role: "", name: "" });
   const [loading, setLoading] = useState(true);
 
-  // catalogo
   const [materials, setMaterials] = useState<Material[]>([]);
   const [q, setQ] = useState("");
 
-  // qty per riga materiale (string per gestire virgole)
+  // qty per riga materiale (string per decimali e virgole)
   const [qtyById, setQtyById] = useState<Record<string, string>>({});
 
   // ordine
@@ -70,7 +89,7 @@ export default function MagazzinoPage() {
   const [toast, setToast] = useState("");
   const toastTimerRef = useRef<number | null>(null);
 
-  const cartCount = useMemo(() => cart.reduce((acc, it) => acc + (it.qty > 0 ? 1 : 0), 0), [cart]);
+  const cartCount = useMemo(() => cart.length, [cart]);
 
   const filteredMaterials = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -105,7 +124,7 @@ export default function MagazzinoPage() {
       .from("materials")
       .select("id,name,code,category,brand,unit,active,created_at")
       .order("name", { ascending: true })
-      .limit(500);
+      .limit(800);
 
     if (error) {
       console.error(error);
@@ -116,11 +135,11 @@ export default function MagazzinoPage() {
     const list = (data ?? []) as Material[];
     setMaterials(list);
 
-    // inizializza qtyById se mancano
+    // ✅ default qty = "0"
     setQtyById((prev) => {
       const next = { ...prev };
       for (const m of list) {
-        if (next[m.id] === undefined) next[m.id] = "1";
+        if (next[m.id] === undefined) next[m.id] = "0";
       }
       return next;
     });
@@ -131,11 +150,12 @@ export default function MagazzinoPage() {
   }
 
   function addToCart(m: Material) {
-    const raw = qtyById[m.id] ?? "1";
+    const raw = qtyById[m.id] ?? "0";
     const add = parseQty(raw);
+
     if (add <= 0) {
-      showToast("Quantità non valida");
-      vibrate(10);
+      showToast("Inserisci una quantità > 0");
+      vibrate(15);
       return;
     }
 
@@ -149,6 +169,9 @@ export default function MagazzinoPage() {
       return copy;
     });
 
+    // ✅ dopo aggiunta, reset qty a 0
+    setRowQty(m.id, "0");
+
     vibrate(15);
     showToast("Aggiunto al carrello");
   }
@@ -156,7 +179,9 @@ export default function MagazzinoPage() {
   function updateCartQty(materialId: string, value: string) {
     const n = parseQty(value);
     setCart((prev) =>
-      prev.map((x) => (x.material_id === materialId ? { ...x, qty: n } : x)).filter((x) => x.qty > 0)
+      prev
+        .map((x) => (x.material_id === materialId ? { ...x, qty: n } : x))
+        .filter((x) => x.qty > 0)
     );
   }
 
@@ -177,7 +202,6 @@ export default function MagazzinoPage() {
       return;
     }
 
-    // crea pickup
     const { data: p, error: ep } = await supabase
       .from("pickups")
       .insert([
@@ -197,7 +221,6 @@ export default function MagazzinoPage() {
       return;
     }
 
-    // inserisci righe
     const itemsPayload = cart.map((it) => ({
       pickup_id: p.id,
       name: it.name,
@@ -227,6 +250,7 @@ export default function MagazzinoPage() {
   }
 
   useEffect(() => {
+    ensureMobileCartCSS();
     (async () => {
       setLoading(true);
       const ok = await fetchMeOrRedirect();
@@ -254,15 +278,16 @@ export default function MagazzinoPage() {
   }
 
   return (
-    <main style={ui.wrap}>
+    <main style={{ ...ui.wrap }} className="mobileBottomPad">
       {toast && <div style={toastStyle}>{toast}</div>}
 
       <AppHeader
         title="Magazzino"
-        subtitle="Seleziona materiali, inserisci quantità decimali e invia all’ufficio"
+        subtitle="Seleziona materiali e invia all’ufficio"
         right={
           <div style={{ display: "flex", gap: 10 }}>
-            <button style={ui.btnSoft} onClick={() => setCartOpen(true)}>
+            {/* ✅ su desktop resta in alto */}
+            <button className="desktopCartBtn" style={ui.btnSoft} onClick={() => setCartOpen(true)}>
               Carrello ({cartCount})
             </button>
             <button style={ui.btnSoft} onClick={logout}>
@@ -362,7 +387,7 @@ export default function MagazzinoPage() {
                     inputMode="decimal"
                     step="0.01"
                     min="0"
-                    value={qtyById[m.id] ?? "1"}
+                    value={qtyById[m.id] ?? "0"}
                     onChange={(e) => setRowQty(m.id, e.target.value)}
                   />
                 </label>
@@ -371,12 +396,26 @@ export default function MagazzinoPage() {
                   Aggiungi
                 </button>
               </div>
+
+              <div style={{ color: "var(--muted)", fontSize: 12 }}>
+                Puoi usare anche la virgola (es. <b>1,5</b>).
+              </div>
             </div>
           ))}
 
           {filteredMaterials.length === 0 && <div style={{ color: "var(--muted)" }}>Nessun materiale trovato.</div>}
         </div>
       </section>
+
+      {/* ✅ Barra carrello in basso (solo mobile via CSS) */}
+      <div className="mobileCartBar" style={mobileBar}>
+        <button style={{ ...ui.btn, padding: "12px 14px", width: "100%" }} onClick={() => setCartOpen(true)}>
+          Apri carrello{" "}
+          <span style={mobileBadge}>
+            {cartCount}
+          </span>
+        </button>
+      </div>
 
       {/* MODALE CARRELLO */}
       {cartOpen && (
@@ -440,10 +479,6 @@ export default function MagazzinoPage() {
                   Invia all’ufficio
                 </button>
               </div>
-
-              <div style={{ color: "var(--muted)", fontSize: 12 }}>
-                Suggerimento: puoi usare la virgola (es. <b>1,5</b>).
-              </div>
             </div>
           </div>
         </div>
@@ -497,4 +532,32 @@ const modalHeader: CSSProperties = {
   padding: 12,
   background: "linear-gradient(180deg, var(--card), var(--blue-50))",
   borderBottom: "1px solid var(--border)",
+};
+
+const mobileBar: CSSProperties = {
+  position: "fixed",
+  left: 0,
+  right: 0,
+  bottom: 0,
+  padding: 12,
+  background: "rgba(255,255,255,.92)",
+  backdropFilter: "blur(10px)",
+  borderTop: "1px solid var(--border)",
+  boxShadow: "0 -12px 30px rgba(2, 6, 23, 0.08)",
+  zIndex: 9998,
+  display: "none", // mostrato da CSS su mobile
+};
+
+const mobileBadge: CSSProperties = {
+  marginLeft: 10,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  minWidth: 28,
+  height: 28,
+  padding: "0 8px",
+  borderRadius: 999,
+  fontWeight: 900,
+  background: "rgba(255,255,255,.18)",
+  border: "1px solid rgba(255,255,255,.35)",
 };

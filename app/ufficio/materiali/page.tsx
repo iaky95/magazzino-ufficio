@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import type { CSSProperties } from "react";
 import { supabase } from "@/lib/supabase";
 import { AppHeader } from "@/components/AppHeader";
 import { ui } from "@/components/uiStyles";
@@ -35,6 +36,11 @@ export default function UfficioMaterialiPage() {
   const [materials, setMaterials] = useState<Material[]>([]);
   const [q, setQ] = useState("");
   const [busyId, setBusyId] = useState<string>(""); // per disabilitare bottoni su riga
+
+  // ✅ modale conferma eliminazione
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [toDelete, setToDelete] = useState<{ id: string; name: string } | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -126,42 +132,55 @@ export default function UfficioMaterialiPage() {
       return;
     }
 
-    // update UI immediato + refresh “vera”
     setMaterials((prev) => prev.map((m) => (m.id === id ? { ...m, active: next } : m)));
     await loadMaterials();
     setBusyId("");
   }
 
-  // ✅ DELETE vero via API server (service role), così non “ricompare”
-  async function deleteMaterial(id: string) {
-    const ok = window.confirm(
-      "Sei sicuro di voler eliminare questo materiale?\n\nL'operazione è irreversibile."
-    );
-  
-    if (!ok) return;
-  
-    setBusyId(id);
+  // ✅ apre modale custom
+  function askDelete(m: Material) {
     setMsg(null);
-  
+    setToDelete({ id: m.id, name: m.name });
+    setConfirmOpen(true);
+  }
+
+  function closeConfirm() {
+    if (deleting) return;
+    setConfirmOpen(false);
+    setToDelete(null);
+  }
+
+  // ✅ DELETE vero via API server (service role)
+  async function confirmDelete() {
+    if (!toDelete) return;
+
+    setDeleting(true);
+    setBusyId(toDelete.id);
+    setMsg(null);
+
     const r = await fetch("/api/materials/delete", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id }),
+      body: JSON.stringify({ id: toDelete.id }),
     });
-  
+
     const j = await r.json().catch(() => ({}));
-  
+
     if (!r.ok) {
       setMsg({ type: "err", text: `Errore eliminazione: ${j.error || "sconosciuto"}` });
+      setDeleting(false);
       setBusyId("");
       return;
     }
-  
+
     setMsg({ type: "ok", text: "Materiale eliminato." });
     await loadMaterials();
+
+    setDeleting(false);
     setBusyId("");
+    setConfirmOpen(false);
+    setToDelete(null);
   }
-  
 
   async function logout() {
     await fetch("/api/logout", { method: "POST" });
@@ -186,6 +205,16 @@ export default function UfficioMaterialiPage() {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ESC chiude modale
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape" && confirmOpen) closeConfirm();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [confirmOpen, deleting]);
 
   if (loading) {
     return (
@@ -214,6 +243,47 @@ export default function UfficioMaterialiPage() {
           </div>
         }
       />
+
+      {/* ✅ MODALE CONFERMA */}
+      {confirmOpen && toDelete && (
+        <div style={modalOverlay} onClick={closeConfirm} role="dialog" aria-modal="true">
+          <div style={modalCard} onClick={(e) => e.stopPropagation()}>
+            <div style={modalHeader}>
+              <div style={{ fontWeight: 900, fontSize: 16 }}>Conferma eliminazione</div>
+              <button style={ui.btnSoft} onClick={closeConfirm} disabled={deleting}>
+                Chiudi
+              </button>
+            </div>
+
+            <div style={{ padding: 14 }}>
+              <div style={{ color: "var(--muted)", lineHeight: 1.35 }}>
+                Stai per eliminare definitivamente:
+              </div>
+
+              <div style={modalName}>
+                {toDelete.name}
+              </div>
+
+              <div style={{ marginTop: 10, color: "var(--muted)", fontSize: 13 }}>
+                Questa operazione è <b>irreversibile</b>.
+              </div>
+
+              <div style={modalActions}>
+                <button style={ui.btnSoft} onClick={closeConfirm} disabled={deleting}>
+                  Annulla
+                </button>
+                <button
+                  style={{ ...ui.btnDanger, padding: "12px 14px", opacity: deleting ? 0.6 : 1 }}
+                  onClick={confirmDelete}
+                  disabled={deleting}
+                >
+                  {deleting ? "Eliminazione…" : "Elimina"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <section style={ui.card}>
         <div style={{ color: "var(--muted)", fontSize: 13, marginBottom: 10 }}>
@@ -371,15 +441,15 @@ export default function UfficioMaterialiPage() {
                   <button
                     style={ui.btnSoft}
                     onClick={() => toggleActive(m.id, !m.active)}
-                    disabled={busyId === m.id}
+                    disabled={busyId === m.id || deleting}
                   >
                     {m.active ? "Disattiva" : "Attiva"}
                   </button>
 
                   <button
                     style={ui.btnDanger}
-                    onClick={() => deleteMaterial(m.id)}
-                    disabled={busyId === m.id}
+                    onClick={() => askDelete(m)}
+                    disabled={busyId === m.id || deleting}
                   >
                     Elimina
                   </button>
@@ -394,3 +464,52 @@ export default function UfficioMaterialiPage() {
     </main>
   );
 }
+
+/* ====== STILI MODALE ====== */
+
+const modalOverlay: CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  background: "rgba(2, 6, 23, 0.45)",
+  zIndex: 9999,
+  display: "grid",
+  placeItems: "center",
+  padding: 14,
+};
+
+const modalCard: CSSProperties = {
+  width: "min(560px, 100%)",
+  background: "white",
+  borderRadius: 18,
+  border: "1px solid var(--border)",
+  boxShadow: "var(--shadow)",
+  overflow: "hidden",
+};
+
+const modalHeader: CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: 10,
+  padding: 12,
+  background: "linear-gradient(180deg, var(--card), var(--blue-50))",
+  borderBottom: "1px solid var(--border)",
+};
+
+const modalName: CSSProperties = {
+  marginTop: 10,
+  padding: 12,
+  borderRadius: 14,
+  border: "1px solid var(--border)",
+  background: "linear-gradient(180deg, var(--card), var(--blue-50))",
+  fontWeight: 900,
+  color: "var(--text)",
+};
+
+const modalActions: CSSProperties = {
+  marginTop: 14,
+  display: "flex",
+  justifyContent: "flex-end",
+  gap: 10,
+  flexWrap: "wrap",
+};

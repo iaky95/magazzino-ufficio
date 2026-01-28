@@ -36,7 +36,6 @@ type Material = {
 };
 
 type CartLine = {
-  // “id” è quello del materiale, se selezionato dal catalogo; se inserito manualmente è null
   materialId: string | null;
   name: string;
   code?: string | null;
@@ -47,31 +46,86 @@ type CartLine = {
   notes: string;
 };
 
+function useMedia(query: string) {
+  const [matches, setMatches] = useState(false);
+  useEffect(() => {
+    const m = window.matchMedia(query);
+    const onChange = () => setMatches(m.matches);
+    onChange();
+    m.addEventListener?.("change", onChange);
+    return () => m.removeEventListener?.("change", onChange);
+  }, [query]);
+  return matches;
+}
+
+function clampQty(n: number) {
+  const x = Number.isFinite(n) ? Math.floor(n) : 1;
+  return x < 1 ? 1 : x;
+}
+
+function QtyStepper(props: {
+  value: number;
+  onChange: (next: number) => void;
+}) {
+  const v = clampQty(props.value);
+
+  return (
+    <div style={stepperWrap}>
+      <button
+        type="button"
+        style={stepperBtn}
+        onClick={() => props.onChange(clampQty(v - 1))}
+        aria-label="Diminuisci"
+      >
+        –
+      </button>
+
+      <input
+        style={stepperInput}
+        inputMode="numeric"
+        value={String(v)}
+        onChange={(e) => props.onChange(clampQty(Number(e.target.value)))}
+      />
+
+      <button
+        type="button"
+        style={stepperBtn}
+        onClick={() => props.onChange(clampQty(v + 1))}
+        aria-label="Aumenta"
+      >
+        +
+      </button>
+    </div>
+  );
+}
+
 export default function MagazzinoPage() {
+  const isMobile = useMedia("(max-width: 860px)");
+
   const [me, setMe] = useState<{ role: string; name: string }>({ role: "", name: "" });
   const [authLoading, setAuthLoading] = useState(true);
 
-  // intestazione prelievo
   const [customer, setCustomer] = useState("");
   const [pickupNotes, setPickupNotes] = useState("");
 
-  // catalogo
   const [materials, setMaterials] = useState<Material[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState<string>("Tutte");
   const [onlyActive, setOnlyActive] = useState(true);
 
-  // carrello
   const [cart, setCart] = useState<CartLine[]>([]);
   const [manualName, setManualName] = useState("");
   const [manualQty, setManualQty] = useState<number>(1);
   const [manualNotes, setManualNotes] = useState("");
 
-  // storico
   const [pickups, setPickups] = useState<(Pickup & { items: PickupItem[] })[]>([]);
-
   const [sending, setSending] = useState(false);
+
+  // Drawer carrello su mobile
+  const [cartOpen, setCartOpen] = useState(false);
+
+  const cartCount = useMemo(() => cart.reduce((sum, x) => sum + clampQty(x.qty), 0), [cart]);
 
   const canSend = useMemo(() => {
     const hasCustomer = customer.trim().length > 0;
@@ -89,13 +143,7 @@ export default function MagazzinoPage() {
 
       if (!q) return true;
 
-      const hay = [
-        m.name,
-        m.code ?? "",
-        m.category ?? "",
-        m.brand ?? "",
-        m.unit ?? "",
-      ]
+      const hay = [m.name, m.code ?? "", m.category ?? "", m.brand ?? "", m.unit ?? ""]
         .join(" ")
         .toLowerCase();
 
@@ -116,7 +164,6 @@ export default function MagazzinoPage() {
   }
 
   async function loadMaterials() {
-    // prendiamo anche inattivi per poterli cercare se disabiliti “solo attivi”
     const { data, error } = await supabase
       .from("materials")
       .select("id,name,code,category,brand,unit,active")
@@ -130,9 +177,9 @@ export default function MagazzinoPage() {
     const list = (data ?? []) as Material[];
     setMaterials(list);
 
-    const cats = Array.from(
-      new Set(list.map((x) => (x.category ?? "").trim()).filter(Boolean))
-    ).sort((a, b) => a.localeCompare(b));
+    const cats = Array.from(new Set(list.map((x) => (x.category ?? "").trim()).filter(Boolean))).sort((a, b) =>
+      a.localeCompare(b)
+    );
     setCategories(cats);
   }
 
@@ -141,7 +188,7 @@ export default function MagazzinoPage() {
       .from("pickups")
       .select("*")
       .order("created_at", { ascending: false })
-      .limit(30);
+      .limit(20);
 
     if (ep) {
       console.error(ep);
@@ -154,11 +201,7 @@ export default function MagazzinoPage() {
       return;
     }
 
-    const { data: it, error: ei } = await supabase
-      .from("pickup_items")
-      .select("*")
-      .in("pickup_id", ids);
-
+    const { data: it, error: ei } = await supabase.from("pickup_items").select("*").in("pickup_id", ids);
     if (ei) {
       console.error(ei);
       return;
@@ -187,7 +230,7 @@ export default function MagazzinoPage() {
       setAuthLoading(false);
 
       const ch = supabase
-        .channel("realtime-pickups-magazzino-shop")
+        .channel("realtime-pickups-magazzino-responsive")
         .on("postgres_changes", { event: "*", schema: "public", table: "pickups" }, () => loadPickups())
         .on("postgres_changes", { event: "*", schema: "public", table: "pickup_items" }, () => loadPickups())
         .on("postgres_changes", { event: "*", schema: "public", table: "materials" }, () => loadMaterials())
@@ -198,13 +241,17 @@ export default function MagazzinoPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // se passa da mobile a desktop chiudi drawer
+  useEffect(() => {
+    if (!isMobile) setCartOpen(false);
+  }, [isMobile]);
+
   function addToCart(m: Material) {
     setCart((prev) => {
-      // se esiste già, incremento qty
       const idx = prev.findIndex((x) => x.materialId === m.id);
       if (idx >= 0) {
         const copy = [...prev];
-        copy[idx] = { ...copy[idx], qty: (copy[idx].qty ?? 1) + 1 };
+        copy[idx] = { ...copy[idx], qty: clampQty(copy[idx].qty + 1) };
         return copy;
       }
       return [
@@ -221,6 +268,7 @@ export default function MagazzinoPage() {
         },
       ];
     });
+    if (isMobile) setCartOpen(true); // su mobile: aggiungi e apri carrello (più comodo)
   }
 
   function addManualToCart() {
@@ -232,7 +280,7 @@ export default function MagazzinoPage() {
       {
         materialId: null,
         name,
-        qty: manualQty > 0 ? manualQty : 1,
+        qty: clampQty(manualQty),
         notes: manualNotes.trim(),
       },
     ]);
@@ -240,6 +288,7 @@ export default function MagazzinoPage() {
     setManualName("");
     setManualQty(1);
     setManualNotes("");
+    if (isMobile) setCartOpen(true);
   }
 
   function updateCartLine(i: number, patch: Partial<CartLine>) {
@@ -258,14 +307,7 @@ export default function MagazzinoPage() {
 
     const { data: pickup, error: e1 } = await supabase
       .from("pickups")
-      .insert([
-        {
-          customer: customer.trim(),
-          notes: pickupNotes.trim(),
-          status: "NUOVO",
-          created_by: who,
-        },
-      ])
+      .insert([{ customer: customer.trim(), notes: pickupNotes.trim(), status: "NUOVO", created_by: who }])
       .select("*")
       .single();
 
@@ -281,8 +323,7 @@ export default function MagazzinoPage() {
       .map((x) => ({
         pickup_id: pickup.id,
         name: x.name.trim(),
-        qty: Number(x.qty) > 0 ? Number(x.qty) : 1,
-        // puoi includere “codice/categoria” dentro la nota in modo leggibile
+        qty: clampQty(x.qty),
         notes: [
           x.notes?.trim() || "",
           x.code ? `Cod: ${x.code}` : "",
@@ -295,7 +336,6 @@ export default function MagazzinoPage() {
       }));
 
     const { error: e2 } = await supabase.from("pickup_items").insert(cleanItems);
-
     if (e2) {
       console.error(e2);
       alert("Errore salvataggio materiali");
@@ -303,10 +343,10 @@ export default function MagazzinoPage() {
       return;
     }
 
-    // reset
     setCustomer("");
     setPickupNotes("");
     setCart([]);
+    setCartOpen(false);
 
     await loadPickups();
     setSending(false);
@@ -325,27 +365,122 @@ export default function MagazzinoPage() {
     );
   }
 
+  // layout responsive
+  const grid: React.CSSProperties = {
+    display: "grid",
+    gap: 14,
+    gridTemplateColumns: isMobile ? "1fr" : "1.25fr 0.75fr",
+    alignItems: "start",
+  };
+
+  const stickyCart: React.CSSProperties = isMobile ? {} : { position: "sticky", top: 14 };
+
+  const pickupHeaderGrid: React.CSSProperties = {
+    display: "grid",
+    gridTemplateColumns: isMobile ? "1fr" : "320px 1fr",
+    gap: 12,
+  };
+
+  const filtersGrid: React.CSSProperties = {
+    display: "grid",
+    gridTemplateColumns: isMobile ? "1fr" : "1fr 220px 180px",
+    gap: 10,
+  };
+
+  // componente carrello (riusato per sidebar e drawer)
+  const CartPanel = (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
+        <div style={{ fontWeight: 900, fontSize: 16 }}>Carrello</div>
+        <div style={{ color: "var(--muted)", fontSize: 13 }}>
+          Totale: <b style={{ color: "var(--text)" }}>{cartCount}</b>
+        </div>
+      </div>
+
+      <div style={{ marginTop: 10, border: "1px solid var(--border)", borderRadius: 14, background: "white" }}>
+        {cart.length === 0 ? (
+          <div style={{ padding: 14, color: "var(--muted)" }}>Aggiungi dal catalogo.</div>
+        ) : (
+          <div style={{ padding: 10, display: "grid", gap: 10 }}>
+            {cart.map((x, i) => (
+              <div key={i} style={{ border: "1px solid var(--border)", borderRadius: 14, padding: 10 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+                  <div style={{ fontWeight: 900, fontSize: 15, lineHeight: 1.2 }}>{x.name}</div>
+                  <button style={ui.btnDanger} onClick={() => removeCartLine(i)}>
+                    Rimuovi
+                  </button>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "160px 1fr", gap: 10, marginTop: 10 }}>
+                  <label style={ui.lab}>
+                    Q.tà
+                    <QtyStepper
+                      value={x.qty}
+                      onChange={(next) => updateCartLine(i, { qty: clampQty(next) })}
+                    />
+                  </label>
+
+                  <label style={ui.lab}>
+                    Note riga (opz.)
+                    <input
+                      style={{ ...ui.inp, padding: "12px 14px", fontSize: 16 }}
+                      value={x.notes}
+                      onChange={(e) => updateCartLine(i, { notes: e.target.value })}
+                      placeholder="es. variante, misura…"
+                    />
+                  </label>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+        <button
+          style={{ ...ui.btn, padding: "14px 16px", fontSize: 16, opacity: canSend ? 1 : 0.5 }}
+          disabled={!canSend}
+          onClick={sendPickup}
+        >
+          {sending ? "Invio…" : "Invia all’ufficio"}
+        </button>
+
+        <button
+          style={{ ...ui.btnSoft, padding: "12px 14px" }}
+          onClick={() => setCart([])}
+          disabled={cart.length === 0}
+        >
+          Svuota carrello
+        </button>
+
+        <div style={{ color: "var(--muted)", fontSize: 12 }}>
+          Suggerimento: cerca rapidamente, aggiungi, poi rivedi quantità nel carrello.
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <main style={ui.wrap}>
       <AppHeader
         title="Magazzino"
-        subtitle="Seleziona materiali dal catalogo (stile carrello) e invia all’ufficio."
+        subtitle="Catalogo + carrello, ottimizzato per smartphone e tablet."
         right={<button style={ui.btnSoft} onClick={logout}>Esci</button>}
       />
 
-      {/* INTESTAZIONE PRELIEVO */}
+      {/* PRELIEVO */}
       <section style={ui.card}>
         <div style={{ color: "var(--muted)", fontSize: 13, marginBottom: 10 }}>
           Loggato come: <b style={{ color: "var(--text)" }}>{me.name}</b>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: 12 }}>
+        <div style={pickupHeaderGrid}>
           <label style={ui.lab}>
             Cliente
             <input
+              style={{ ...ui.inp, padding: "12px 14px", fontSize: 16 }}
               value={customer}
               onChange={(e) => setCustomer(e.target.value)}
-              style={ui.inp}
               placeholder="es. Rossi SRL"
             />
           </label>
@@ -353,47 +488,45 @@ export default function MagazzinoPage() {
           <label style={ui.lab}>
             Note prelievo (opz.)
             <input
+              style={{ ...ui.inp, padding: "12px 14px", fontSize: 16 }}
               value={pickupNotes}
               onChange={(e) => setPickupNotes(e.target.value)}
-              style={ui.inp}
-              placeholder="es. urgente / consegna / riferimento"
+              placeholder="es. urgente / riferimento"
             />
           </label>
         </div>
       </section>
 
-      {/* SHOP + CARRELLO */}
+      {/* SHOP + CARRELLO (desktop/tablet) */}
       <section style={ui.card}>
-        <div style={{ display: "grid", gridTemplateColumns: "1.2fr 0.8fr", gap: 14 }}>
+        <div style={grid}>
           {/* CATALOGO */}
           <div>
-            <div style={{ fontWeight: 900, marginBottom: 10 }}>Catalogo materiali</div>
+            <div style={{ fontWeight: 900, marginBottom: 10, fontSize: 16 }}>Catalogo materiali</div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 220px 180px", gap: 10 }}>
+            <div style={filtersGrid}>
               <input
-                style={ui.inp}
+                style={{ ...ui.inp, padding: "12px 14px", fontSize: 16 }}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Cerca per nome, codice, categoria, marca…"
               />
 
               <select
-                style={ui.inp}
+                style={{ ...ui.inp, padding: "12px 14px", fontSize: 16 }}
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
               >
                 <option value="Tutte">Tutte le categorie</option>
                 {categories.map((c) => (
-                  <option key={c} value={c}>{c}</option>
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
                 ))}
               </select>
 
               <label style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 8px", color: "var(--muted)" }}>
-                <input
-                  type="checkbox"
-                  checked={onlyActive}
-                  onChange={(e) => setOnlyActive(e.target.checked)}
-                />
+                <input type="checkbox" checked={onlyActive} onChange={(e) => setOnlyActive(e.target.checked)} />
                 Solo attivi
               </label>
             </div>
@@ -403,7 +536,7 @@ export default function MagazzinoPage() {
                 Risultati: <b style={{ color: "var(--text)" }}>{filteredMaterials.length}</b>
               </div>
 
-              <div style={{ maxHeight: 420, overflow: "auto" }}>
+              <div style={{ maxHeight: isMobile ? 360 : 460, overflow: "auto" }}>
                 {filteredMaterials.map((m) => (
                   <div
                     key={m.id}
@@ -411,15 +544,15 @@ export default function MagazzinoPage() {
                       display: "grid",
                       gridTemplateColumns: "1fr auto",
                       gap: 10,
-                      padding: 10,
+                      padding: 12,
                       borderBottom: "1px solid var(--border)",
                       alignItems: "center",
                       opacity: m.active ? 1 : 0.55,
                     }}
                   >
                     <div>
-                      <div style={{ fontWeight: 900 }}>{m.name}</div>
-                      <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 2 }}>
+                      <div style={{ fontWeight: 900, fontSize: 16 }}>{m.name}</div>
+                      <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 4, lineHeight: 1.35 }}>
                         {m.code ? <span><b>Cod:</b> {m.code}</span> : null}
                         {m.category ? <span>{m.code ? " · " : ""}<b>Cat:</b> {m.category}</span> : null}
                         {m.brand ? <span>{(m.code || m.category) ? " · " : ""}<b>Marca:</b> {m.brand}</span> : null}
@@ -428,10 +561,9 @@ export default function MagazzinoPage() {
                     </div>
 
                     <button
-                      style={{ ...ui.btnSmall, whiteSpace: "nowrap" }}
+                      style={{ ...ui.btnSmall, padding: "10px 12px", fontSize: 14, whiteSpace: "nowrap" }}
                       onClick={() => addToCart(m)}
                       disabled={onlyActive && !m.active}
-                      title="Aggiungi al carrello"
                     >
                       + Aggiungi
                     </button>
@@ -446,115 +578,40 @@ export default function MagazzinoPage() {
               </div>
             </div>
 
-            {/* AGGIUNTA MANUALE */}
+            {/* MANUALE */}
             <div style={{ marginTop: 12, padding: 12, border: "1px dashed var(--border)", borderRadius: 14 }}>
-              <div style={{ fontWeight: 900, marginBottom: 8 }}>Aggiunta manuale (se non è in elenco)</div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 1fr auto", gap: 10 }}>
+              <div style={{ fontWeight: 900, marginBottom: 8 }}>Aggiunta manuale</div>
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 160px 1fr auto", gap: 10 }}>
                 <input
-                  style={ui.inp}
+                  style={{ ...ui.inp, padding: "12px 14px", fontSize: 16 }}
                   value={manualName}
                   onChange={(e) => setManualName(e.target.value)}
                   placeholder="Nome materiale"
                 />
+
+                <label style={{ display: "grid", gap: 6, fontSize: 14 }}>
+                  Quantità
+                  <QtyStepper value={manualQty} onChange={(n) => setManualQty(clampQty(n))} />
+                </label>
+
                 <input
-                  style={ui.inp}
-                  type="number"
-                  min={1}
-                  value={manualQty}
-                  onChange={(e) => setManualQty(Number(e.target.value))}
-                />
-                <input
-                  style={ui.inp}
+                  style={{ ...ui.inp, padding: "12px 14px", fontSize: 16 }}
                   value={manualNotes}
                   onChange={(e) => setManualNotes(e.target.value)}
                   placeholder="Note (opz.)"
                 />
-                <button style={ui.btnSoft} onClick={addManualToCart}>Aggiungi</button>
-              </div>
-            </div>
-          </div>
-
-          {/* CARRELLO */}
-          <div>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
-              <div style={{ fontWeight: 900 }}>Carrello</div>
-              <div style={{ color: "var(--muted)", fontSize: 13 }}>
-                Righe: <b style={{ color: "var(--text)" }}>{cart.length}</b>
+                <button style={ui.btnSoft} onClick={addManualToCart}>
+                  Aggiungi
+                </button>
               </div>
             </div>
 
-            <div style={{ marginTop: 10, border: "1px solid var(--border)", borderRadius: 14, background: "white" }}>
-              {cart.length === 0 ? (
-                <div style={{ padding: 14, color: "var(--muted)" }}>
-                  Nessun materiale nel carrello. Aggiungi dal catalogo.
-                </div>
-              ) : (
-                <div style={{ padding: 10, display: "grid", gap: 10 }}>
-                  {cart.map((x, i) => (
-                    <div key={i} style={{ border: "1px solid var(--border)", borderRadius: 14, padding: 10 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                        <div style={{ fontWeight: 900 }}>{x.name}</div>
-                        <button style={ui.btnDanger} onClick={() => removeCartLine(i)}>Rimuovi</button>
-                      </div>
-
-                      <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 4 }}>
-                        {x.code ? <span><b>Cod:</b> {x.code}</span> : null}
-                        {x.category ? <span>{x.code ? " · " : ""}<b>Cat:</b> {x.category}</span> : null}
-                        {x.brand ? <span>{(x.code || x.category) ? " · " : ""}<b>Marca:</b> {x.brand}</span> : null}
-                        {x.unit ? <span>{(x.code || x.category || x.brand) ? " · " : ""}<b>UM:</b> {x.unit}</span> : null}
-                      </div>
-
-                      <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: 10, marginTop: 10 }}>
-                        <label style={ui.lab}>
-                          Q.tà
-                          <input
-                            style={ui.inp}
-                            type="number"
-                            min={1}
-                            value={x.qty}
-                            onChange={(e) => updateCartLine(i, { qty: Number(e.target.value) })}
-                          />
-                        </label>
-
-                        <label style={ui.lab}>
-                          Note riga (opz.)
-                          <input
-                            style={ui.inp}
-                            value={x.notes}
-                            onChange={(e) => updateCartLine(i, { notes: e.target.value })}
-                            placeholder="es. colore, misura, variante…"
-                          />
-                        </label>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
-              <button
-                style={{ ...ui.btn, opacity: canSend ? 1 : 0.5 }}
-                disabled={!canSend}
-                onClick={sendPickup}
-                title={!canSend ? "Inserisci Cliente e almeno 1 riga nel carrello" : "Invia all'ufficio"}
-              >
-                {sending ? "Invio…" : "Invia all’ufficio"}
-              </button>
-
-              <button
-                style={ui.btnSoft}
-                onClick={() => setCart([])}
-                disabled={cart.length === 0}
-              >
-                Svuota carrello
-              </button>
-            </div>
-
-            <div style={{ marginTop: 10, color: "var(--muted)", fontSize: 12 }}>
-              Nota: Codice/Categoria/Marca/UM vengono salvati nelle note riga così l’ufficio li vede anche se non gestisce il catalogo.
-            </div>
+            {/* SPACER per barra mobile */}
+            {isMobile && <div style={{ height: 86 }} />}
           </div>
+
+          {/* CARRELLO (sidebar desktop/tablet) */}
+          {!isMobile && <div style={stickyCart}>{CartPanel}</div>}
         </div>
       </section>
 
@@ -587,6 +644,118 @@ export default function MagazzinoPage() {
           ))}
         </div>
       </section>
+
+      {/* BARRA FISSA MOBILE + DRAWER CARRELLO */}
+      {isMobile && (
+        <>
+          <div style={mobileBar}>
+            <button
+              style={{ ...ui.btnSoft, width: "100%", padding: "14px 16px", fontSize: 16 }}
+              onClick={() => setCartOpen(true)}
+            >
+              Apri carrello ({cartCount})
+            </button>
+          </div>
+
+          {cartOpen && (
+            <div
+              style={drawerOverlay}
+              onClick={() => setCartOpen(false)}
+              role="dialog"
+              aria-modal="true"
+            >
+              <div style={drawerPanel} onClick={(e) => e.stopPropagation()}>
+                <div style={drawerHeader}>
+                  <div style={{ fontWeight: 900, fontSize: 16 }}>Carrello</div>
+                  <button style={ui.btnSoft} onClick={() => setCartOpen(false)}>
+                    Chiudi
+                  </button>
+                </div>
+
+                <div style={drawerBody}>{CartPanel}</div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
     </main>
   );
 }
+
+/* ====== STILI INLINE ====== */
+
+const stepperWrap: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "44px 1fr 44px",
+  gap: 8,
+  alignItems: "center",
+};
+
+const stepperBtn: React.CSSProperties = {
+  padding: "10px 0",
+  borderRadius: 12,
+  border: "1px solid var(--border)",
+  background: "linear-gradient(180deg, var(--card), var(--blue-50))",
+  color: "var(--blue-700)",
+  fontWeight: 900,
+  cursor: "pointer",
+  fontSize: 18,
+  lineHeight: 1,
+};
+
+const stepperInput: React.CSSProperties = {
+  padding: "12px 14px",
+  borderRadius: 12,
+  border: "1px solid var(--border)",
+  fontSize: 16,
+  outline: "none",
+  textAlign: "center",
+  background: "white",
+};
+
+const mobileBar: React.CSSProperties = {
+  position: "fixed",
+  left: 0,
+  right: 0,
+  bottom: 0,
+  padding: 12,
+  background: "rgba(246,250,255,0.92)",
+  borderTop: "1px solid var(--border)",
+  backdropFilter: "blur(8px)",
+  zIndex: 50,
+};
+
+const drawerOverlay: React.CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  background: "rgba(2, 6, 23, 0.45)",
+  zIndex: 60,
+  display: "grid",
+  alignItems: "end",
+};
+
+const drawerPanel: React.CSSProperties = {
+  background: "var(--bg)",
+  borderTopLeftRadius: 18,
+  borderTopRightRadius: 18,
+  border: "1px solid var(--border)",
+  boxShadow: "var(--shadow)",
+  maxHeight: "92vh",
+  overflow: "hidden",
+};
+
+const drawerHeader: React.CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: 10,
+  padding: 12,
+  background: "linear-gradient(180deg, var(--card), var(--blue-50))",
+  borderBottom: "1px solid var(--border)",
+};
+
+const drawerBody: React.CSSProperties = {
+  padding: 12,
+  overflow: "auto",
+  maxHeight: "calc(92vh - 62px)",
+};

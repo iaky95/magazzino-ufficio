@@ -324,9 +324,17 @@ export default function UfficioPage() {
         title="Ufficio"
         subtitle={`Ordini in arrivo. Nuovi: ${unreadCount}`}
         right={
-          <button style={ui.btnSoft} onClick={logout}>
-            Esci
-          </button>
+          <div style={{ display: "flex", gap: 10 }}>
+            <a
+              href="/ufficio/materiali"
+              style={{ ...ui.btnSoft, textDecoration: "none", display: "inline-flex", alignItems: "center" }}
+            >
+              Materiali
+            </a>
+            <button style={ui.btnSoft} onClick={logout}>
+              Esci
+            </button>
+          </div>
         }
       />
 

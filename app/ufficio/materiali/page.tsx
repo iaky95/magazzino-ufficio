@@ -34,6 +34,7 @@ export default function UfficioMaterialiPage() {
   // lista
   const [materials, setMaterials] = useState<Material[]>([]);
   const [q, setQ] = useState("");
+  const [busyId, setBusyId] = useState<string>(""); // per disabilitare bottoni su riga
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -47,6 +48,7 @@ export default function UfficioMaterialiPage() {
   async function fetchMeOrRedirect() {
     const r = await fetch("/api/me", { cache: "no-store" });
     const j = await r.json().catch(() => ({ role: "", name: "" }));
+
     if (j.role !== "ufficio") {
       window.location.href = "/login";
       return null;
@@ -60,7 +62,7 @@ export default function UfficioMaterialiPage() {
       .from("materials")
       .select("id,name,code,category,brand,unit,active,created_at")
       .order("created_at", { ascending: false })
-      .limit(200);
+      .limit(250);
 
     if (error) {
       console.error(error);
@@ -90,9 +92,10 @@ export default function UfficioMaterialiPage() {
     };
 
     const { error } = await supabase.from("materials").insert([payload]);
+
     if (error) {
       console.error(error);
-      setMsg({ type: "err", text: "Errore salvataggio materiale (controlla duplicati o permessi)." });
+      setMsg({ type: "err", text: `Errore salvataggio: ${error.message}` });
       setSaving(false);
       return;
     }
@@ -111,25 +114,46 @@ export default function UfficioMaterialiPage() {
   }
 
   async function toggleActive(id: string, next: boolean) {
+    setBusyId(id);
+    setMsg(null);
+
     const { error } = await supabase.from("materials").update({ active: next }).eq("id", id);
+
     if (error) {
       console.error(error);
-      setMsg({ type: "err", text: "Errore aggiornamento stato." });
+      setMsg({ type: "err", text: `Errore aggiornamento: ${error.message}` });
+      setBusyId("");
       return;
     }
+
+    // update UI immediato + refresh “vera”
     setMaterials((prev) => prev.map((m) => (m.id === id ? { ...m, active: next } : m)));
+    await loadMaterials();
+    setBusyId("");
   }
 
+  // ✅ DELETE vero via API server (service role), così non “ricompare”
   async function deleteMaterial(id: string) {
-    // elimina diretto: se preferisci "disattiva" invece che cancellare dimmelo e lo cambio
-    const { error } = await supabase.from("materials").delete().eq("id", id);
-    if (error) {
-      console.error(error);
-      setMsg({ type: "err", text: "Errore eliminazione (potrebbe essere usato in ordini / policy RLS)." });
+    setBusyId(id);
+    setMsg(null);
+
+    const r = await fetch("/api/materials/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+
+    const j = await r.json().catch(() => ({}));
+
+    if (!r.ok) {
+      setMsg({ type: "err", text: `Errore eliminazione: ${j.error || "sconosciuto"}` });
+      setBusyId("");
       return;
     }
-    setMaterials((prev) => prev.filter((m) => m.id !== id));
+
     setMsg({ type: "ok", text: "Materiale eliminato." });
+    await loadMaterials();
+    setBusyId("");
   }
 
   async function logout() {
@@ -170,18 +194,18 @@ export default function UfficioMaterialiPage() {
         title="Materiali"
         subtitle="Ufficio: inserisci e gestisci il catalogo"
         right={
-            <div style={{ display: "flex", gap: 10 }}>
-              <a
-                href="/ufficio"
-                style={{ ...ui.btnSoft, textDecoration: "none", display: "inline-flex", alignItems: "center" }}
-              >
-                ← Ufficio
-              </a>
-              <button style={ui.btnSoft} onClick={logout}>
-                Esci
-              </button>
-            </div>
-          }
+          <div style={{ display: "flex", gap: 10 }}>
+            <a
+              href="/ufficio"
+              style={{ ...ui.btnSoft, textDecoration: "none", display: "inline-flex", alignItems: "center" }}
+            >
+              ← Ufficio
+            </a>
+            <button style={ui.btnSoft} onClick={logout}>
+              Esci
+            </button>
+          </div>
+        }
       />
 
       <section style={ui.card}>
@@ -197,7 +221,7 @@ export default function UfficioMaterialiPage() {
               border: "1px solid var(--border)",
               background: msg.type === "ok" ? "rgba(34,197,94,.08)" : "rgba(239,68,68,.08)",
               color: "var(--text)",
-              fontWeight: 700,
+              fontWeight: 800,
               marginBottom: 12,
             }}
           >
@@ -205,7 +229,7 @@ export default function UfficioMaterialiPage() {
           </div>
         )}
 
-        <div style={{ display: "grid", gap: 10, gridTemplateColumns: "1fr", maxWidth: 860 }}>
+        <div style={{ display: "grid", gap: 10, gridTemplateColumns: "1fr", maxWidth: 900 }}>
           <label style={ui.lab}>
             Nome materiale *
             <input
@@ -219,28 +243,48 @@ export default function UfficioMaterialiPage() {
           <div style={{ display: "grid", gap: 10, gridTemplateColumns: "1fr 1fr" }}>
             <label style={ui.lab}>
               Codice (opz.)
-              <input style={{ ...ui.inp, padding: "12px 14px", fontSize: 16 }} value={code} onChange={(e) => setCode(e.target.value)} placeholder="es. CEM-25" />
+              <input
+                style={{ ...ui.inp, padding: "12px 14px", fontSize: 16 }}
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                placeholder="es. CEM-25"
+              />
             </label>
 
             <label style={ui.lab}>
               Categoria (opz.)
-              <input style={{ ...ui.inp, padding: "12px 14px", fontSize: 16 }} value={category} onChange={(e) => setCategory(e.target.value)} placeholder="es. Laterizi" />
+              <input
+                style={{ ...ui.inp, padding: "12px 14px", fontSize: 16 }}
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                placeholder="es. Laterizi"
+              />
             </label>
           </div>
 
           <div style={{ display: "grid", gap: 10, gridTemplateColumns: "1fr 1fr" }}>
             <label style={ui.lab}>
               Marca (opz.)
-              <input style={{ ...ui.inp, padding: "12px 14px", fontSize: 16 }} value={brand} onChange={(e) => setBrand(e.target.value)} placeholder="es. Mapei" />
+              <input
+                style={{ ...ui.inp, padding: "12px 14px", fontSize: 16 }}
+                value={brand}
+                onChange={(e) => setBrand(e.target.value)}
+                placeholder="es. Mapei"
+              />
             </label>
 
             <label style={ui.lab}>
               Unità di misura (opz.)
-              <input style={{ ...ui.inp, padding: "12px 14px", fontSize: 16 }} value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="es. pz / kg / sacco" />
+              <input
+                style={{ ...ui.inp, padding: "12px 14px", fontSize: 16 }}
+                value={unit}
+                onChange={(e) => setUnit(e.target.value)}
+                placeholder="es. pz / kg / sacco"
+              />
             </label>
           </div>
 
-          <label style={{ display: "flex", alignItems: "center", gap: 10, color: "var(--muted)", fontWeight: 700 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 10, color: "var(--muted)", fontWeight: 800 }}>
             <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />
             Materiale attivo
           </label>
@@ -282,6 +326,7 @@ export default function UfficioMaterialiPage() {
                   background: "white",
                   display: "grid",
                   gap: 10,
+                  opacity: busyId === m.id ? 0.65 : 1,
                 }}
               >
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
@@ -290,17 +335,45 @@ export default function UfficioMaterialiPage() {
                 </div>
 
                 <div style={{ color: "var(--muted)", fontSize: 13, lineHeight: 1.35 }}>
-                  {m.code ? <span><b>Cod:</b> {m.code}</span> : null}
-                  {m.category ? <span>{m.code ? " · " : ""}<b>Cat:</b> {m.category}</span> : null}
-                  {m.brand ? <span>{(m.code || m.category) ? " · " : ""}<b>Marca:</b> {m.brand}</span> : null}
-                  {m.unit ? <span>{(m.code || m.category || m.brand) ? " · " : ""}<b>UM:</b> {m.unit}</span> : null}
+                  {m.code ? (
+                    <span>
+                      <b>Cod:</b> {m.code}
+                    </span>
+                  ) : null}
+                  {m.category ? (
+                    <span>
+                      {m.code ? " · " : ""}
+                      <b>Cat:</b> {m.category}
+                    </span>
+                  ) : null}
+                  {m.brand ? (
+                    <span>
+                      {m.code || m.category ? " · " : ""}
+                      <b>Marca:</b> {m.brand}
+                    </span>
+                  ) : null}
+                  {m.unit ? (
+                    <span>
+                      {m.code || m.category || m.brand ? " · " : ""}
+                      <b>UM:</b> {m.unit}
+                    </span>
+                  ) : null}
                 </div>
 
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                  <button style={ui.btnSoft} onClick={() => toggleActive(m.id, !m.active)}>
+                  <button
+                    style={ui.btnSoft}
+                    onClick={() => toggleActive(m.id, !m.active)}
+                    disabled={busyId === m.id}
+                  >
                     {m.active ? "Disattiva" : "Attiva"}
                   </button>
-                  <button style={ui.btnDanger} onClick={() => deleteMaterial(m.id)}>
+
+                  <button
+                    style={ui.btnDanger}
+                    onClick={() => deleteMaterial(m.id)}
+                    disabled={busyId === m.id}
+                  >
                     Elimina
                   </button>
                 </div>

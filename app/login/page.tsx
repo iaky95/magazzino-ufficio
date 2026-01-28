@@ -7,9 +7,9 @@ import { ui } from "@/components/uiStyles";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [role, setRole] = useState<"magazzino" | "ufficio">("magazzino");
-  const [pin, setPin] = useState("");
-  const [name, setName] = useState("");
+
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -20,67 +20,57 @@ export default function LoginPage() {
     const res = await fetch("/api/login", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ role, pin, name }),
+      body: JSON.stringify({ username, password }),
     });
 
-    if (!res.ok) {
-      const j = await res.json().catch(() => ({}));
-      setErr(j?.error ?? "PIN non valido");
+    const j = await res.json().catch(() => ({}));
+
+    if (!res.ok || !j?.ok) {
+      setErr(j?.error ?? "Credenziali non valide");
       setLoading(false);
       return;
     }
 
-    router.push(role === "magazzino" ? "/magazzino" : "/ufficio");
+    // redirect automatico in base al ruolo
+    router.push(j.role === "ufficio" ? "/ufficio" : "/magazzino");
   }
 
   return (
     <main style={ui.wrap}>
-      <AppHeader title="Login" subtitle="Inserisci PIN per accedere." />
+      <AppHeader title="Login" subtitle="Accedi con username e password." />
 
       <section style={ui.card}>
         <label style={ui.lab}>
-          Ruolo
-          <select value={role} onChange={(e) => setRole(e.target.value as any)} style={ui.inp}>
-            <option value="magazzino">Magazzino</option>
-            <option value="ufficio">Ufficio</option>
-          </select>
-        </label>
-
-        {role === "magazzino" && (
-          <label style={ui.lab}>
-            Nome magazziniere
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              style={ui.inp}
-              placeholder="es. Marco"
-            />
-          </label>
-        )}
-
-        <label style={ui.lab}>
-          PIN
+          Username
           <input
-            value={pin}
-            onChange={(e) => setPin(e.target.value)}
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
             style={ui.inp}
-            placeholder="****"
+            placeholder="es. mario"
+            autoComplete="username"
           />
         </label>
 
-        {err && <div style={{ color: "#b91c1c", marginTop: 10, fontWeight: 700 }}>{err}</div>}
+        <label style={ui.lab}>
+          Password
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            style={ui.inp}
+            placeholder="••••••••"
+            autoComplete="current-password"
+          />
+        </label>
+
+        {err && <div style={{ color: "#b91c1c", marginTop: 10, fontWeight: 800 }}>{err}</div>}
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 14 }}>
           <button onClick={submit} style={{ ...ui.btn, opacity: loading ? 0.7 : 1 }} disabled={loading}>
             {loading ? "Accesso…" : "Entra"}
           </button>
         </div>
-
-        <p style={{ color: "var(--muted)", marginTop: 12, fontSize: 13 }}>
-          Se non hai il PIN, chiedilo all’amministratore.
-        </p>
       </section>
     </main>
   );
-        }
-    
+}

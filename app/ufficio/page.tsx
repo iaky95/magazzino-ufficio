@@ -51,10 +51,7 @@ export default function UfficioPage() {
   const [notifyEnabled, setNotifyEnabled] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(false);
 
-  // evita notifiche duplicate
   const lastNotifiedIdRef = useRef<string>("");
-
-  // audio
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const unreadCount = useMemo(() => pickups.filter((p) => p.status === "NUOVO").length, [pickups]);
@@ -88,7 +85,7 @@ export default function UfficioPage() {
   }
 
   async function enableNotificationsAndSound() {
-    // sblocca suono con interazione utente
+    // sblocca audio con interazione utente
     setSoundEnabled(true);
     try {
       const a = new Audio("/ding.mp3");
@@ -101,7 +98,7 @@ export default function UfficioPage() {
       // ignore
     }
 
-    // notifiche desktop
+    // notifiche
     if (typeof window !== "undefined" && "Notification" in window) {
       const perm = await Notification.requestPermission().catch(() => "default" as NotificationPermission);
       const ok = perm === "granted";
@@ -140,7 +137,7 @@ export default function UfficioPage() {
       .from("pickups")
       .select("*")
       .order("created_at", { ascending: false })
-      .limit(50);
+      .limit(60);
 
     if (ep) {
       console.error(ep);
@@ -203,7 +200,6 @@ export default function UfficioPage() {
     window.location.href = "/login";
   }
 
-  // preferenze salvate + CSS animazione
   useEffect(() => {
     ensureBadgeNewAnimationCSS();
     try {
@@ -214,7 +210,6 @@ export default function UfficioPage() {
     }
   }, []);
 
-  // init + realtime
   useEffect(() => {
     (async () => {
       setLoading(true);
@@ -229,22 +224,15 @@ export default function UfficioPage() {
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "pickups" }, (payload) => {
           const p = payload.new as Pickup;
 
-          // evita doppie notifiche
           if (lastNotifiedIdRef.current === p.id) return;
           lastNotifiedIdRef.current = p.id;
 
           playDing();
           sendDesktopNotification(p);
-
-          // refresh lista
           loadPickups();
         })
-        .on("postgres_changes", { event: "*", schema: "public", table: "pickup_items" }, () => {
-          loadPickups();
-        })
-        .on("postgres_changes", { event: "UPDATE", schema: "public", table: "pickups" }, () => {
-          loadPickups();
-        })
+        .on("postgres_changes", { event: "*", schema: "public", table: "pickup_items" }, () => loadPickups())
+        .on("postgres_changes", { event: "UPDATE", schema: "public", table: "pickups" }, () => loadPickups())
         .subscribe();
 
       return () => supabase.removeChannel(ch);
@@ -311,46 +299,84 @@ export default function UfficioPage() {
                 borderRadius: 14,
                 padding: 12,
                 background: "white",
+                display: "grid",
+                gap: 14,
+                gridTemplateColumns: p.status === "CHIUSO" ? "1fr 280px" : "1fr",
+                alignItems: "start",
               }}
             >
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
-                <div style={badgeWrap}>
-                  <div style={{ fontWeight: 900, fontSize: 16 }}>{p.customer}</div>
-                  {p.status === "NUOVO" && <span style={badgeNew}>NUOVO</span>}
+              {/* COLONNA 1 */}
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
+                  <div style={badgeWrap}>
+                    <div style={{ fontWeight: 900, fontSize: 16 }}>{p.customer}</div>
+                    {p.status === "NUOVO" && <span style={badgeNew}>NUOVO</span>}
+                  </div>
+                  <div style={ui.badge}>{p.status}</div>
                 </div>
-                <div style={ui.badge}>{p.status}</div>
+
+                <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
+                  Inserito da: <b style={{ color: "var(--text)" }}>{p.created_by || "—"}</b>
+                </div>
+
+                {p.notes && <div style={{ marginTop: 6, color: "var(--muted)" }}>Note: {p.notes}</div>}
+
+                <ul style={{ margin: "10px 0 0 18px" }}>
+                  {p.items.map((i) => (
+                    <li key={i.id}>
+                      {i.qty}× {i.name}
+                      {i.notes ? ` — (${i.notes})` : ""}
+                    </li>
+                  ))}
+                </ul>
+
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
+                  <button style={ui.btnSoft} onClick={() => setStatus(p.id, "IN_LAVORAZIONE")}>
+                    In lavorazione
+                  </button>
+                  <button style={ui.btnSoft} onClick={() => setStatus(p.id, "PRONTO")}>
+                    Pronto
+                  </button>
+                  <button style={ui.btnSoft} onClick={() => setStatus(p.id, "CHIUSO")}>
+                    Chiuso
+                  </button>
+                  <button style={ui.btnDanger} onClick={() => deletePickup(p.id)}>
+                    Elimina
+                  </button>
+                </div>
               </div>
 
-              <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
-                Inserito da: <b style={{ color: "var(--text)" }}>{p.created_by || "—"}</b>
-              </div>
+              {/* COLONNA 2 (solo CHIUSO) */}
+              {p.status === "CHIUSO" && (
+                <div
+                  style={{
+                    borderLeft: "1px dashed var(--border)",
+                    paddingLeft: 12,
+                    display: "grid",
+                    gap: 10,
+                    color: "var(--muted)",
+                    fontSize: 13,
+                  }}
+                >
+                  <div style={{ fontWeight: 900, color: "var(--text)" }}>Ordine chiuso</div>
 
-              {p.notes && <div style={{ marginTop: 6, color: "var(--muted)" }}>Note: {p.notes}</div>}
+                  <div>
+                    Cliente: <b style={{ color: "var(--text)" }}>{p.customer}</b>
+                  </div>
 
-              <ul style={{ margin: "10px 0 0 18px" }}>
-                {p.items.map((i) => (
-                  <li key={i.id}>
-                    {i.qty}× {i.name}
-                    {i.notes ? ` — (${i.notes})` : ""}
-                  </li>
-                ))}
-              </ul>
+                  <div>
+                    Inserito da: <b style={{ color: "var(--text)" }}>{p.created_by || "—"}</b>
+                  </div>
 
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
-                <button style={ui.btnSoft} onClick={() => setStatus(p.id, "IN_LAVORAZIONE")}>
-                  In lavorazione
-                </button>
-                <button style={ui.btnSoft} onClick={() => setStatus(p.id, "PRONTO")}>
-                  Pronto
-                </button>
-                <button style={ui.btnSoft} onClick={() => setStatus(p.id, "CHIUSO")}>
-                  Chiuso
-                </button>
+                  <div style={{ fontSize: 12 }}>
+                    Stato finale: <b>{p.status}</b>
+                  </div>
 
-                <button style={ui.btnDanger} onClick={() => deletePickup(p.id)}>
-                  Elimina
-                </button>
-              </div>
+                  <div style={{ fontSize: 12 }}>
+                    (Spazio pronto per: note finali, timestamp, firma, archivio…)
+                  </div>
+                </div>
+              )}
             </div>
           ))}
 

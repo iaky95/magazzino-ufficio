@@ -21,7 +21,7 @@ type PickupItem = {
   id: string;
   pickup_id: string;
   name: string;
-  qty: number; // ✅ decimale
+  qty: any; // numeric può arrivare anche come stringa in alcune config
   notes: string;
   created_at: string;
 };
@@ -61,7 +61,17 @@ function statusRank(s: PickupStatus) {
   }
 }
 
-function formatQty(n: number) {
+function toNum(v: any) {
+  if (typeof v === "number") return v;
+  if (typeof v === "string") {
+    const n = parseFloat(v.replace(",", "."));
+    return Number.isFinite(n) ? n : 0;
+  }
+  return 0;
+}
+
+function formatQty(v: any) {
+  const n = toNum(v);
   if (!Number.isFinite(n)) return "0";
   return n.toFixed(3).replace(/\.?0+$/, "");
 }
@@ -75,11 +85,16 @@ export default function UfficioPage() {
   const [notifyEnabled, setNotifyEnabled] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(false);
 
-  // sezione chiusi collassabile
+  // refs per non dover risottoscrivere il realtime quando cambi toggle
+  const notifyEnabledRef = useRef(false);
+  const soundEnabledRef = useRef(false);
+
+  // sezione chiusi
   const [closedOpen, setClosedOpen] = useState(false);
 
   // anti-duplicati notifica
   const lastNotifiedIdRef = useRef<string>("");
+
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   // toast
@@ -87,6 +102,7 @@ export default function UfficioPage() {
   const toastTimerRef = useRef<number | null>(null);
 
   const notifSupported = typeof window !== "undefined" && "Notification" in window;
+
   const unreadCount = useMemo(() => pickups.filter((p) => p.status === "NUOVO").length, [pickups]);
 
   const openPickups = useMemo(() => {
@@ -113,7 +129,6 @@ export default function UfficioPage() {
   }
 
   function playDing() {
-    if (!soundEnabled) return;
     try {
       if (!audioRef.current) {
         audioRef.current = new Audio("/ding.mp3");
@@ -127,7 +142,6 @@ export default function UfficioPage() {
   }
 
   function sendDesktopNotification(p: Pickup) {
-    if (!notifyEnabled) return;
     if (typeof window === "undefined" || !("Notification" in window)) return;
     if (Notification.permission !== "granted") return;
 
@@ -140,6 +154,7 @@ export default function UfficioPage() {
   }
 
   async function enableNotificationsAndSound() {
+    // abilita suono
     setSoundEnabled(true);
 
     // sblocca audio con click
@@ -154,6 +169,7 @@ export default function UfficioPage() {
       // ignore
     }
 
+    // abilita notifiche
     if (typeof window !== "undefined" && "Notification" in window) {
       const perm = await Notification.requestPermission().catch(() => "default" as NotificationPermission);
       const ok = perm === "granted";
@@ -194,7 +210,7 @@ export default function UfficioPage() {
       .from("pickups")
       .select("*")
       .order("created_at", { ascending: false })
-      .limit(150);
+      .limit(180);
 
     if (ep) {
       console.error(ep);
@@ -240,6 +256,9 @@ export default function UfficioPage() {
   }
 
   async function deletePickup(pickupId: string) {
+    const ok = window.confirm("Vuoi eliminare questa richiesta? (irreversibile)");
+    if (!ok) return;
+
     const { error: e1 } = await supabase.from("pickup_items").delete().eq("pickup_id", pickupId);
     if (e1) {
       console.error(e1);
@@ -261,6 +280,7 @@ export default function UfficioPage() {
     window.location.href = "/login";
   }
 
+  // carica preferenze notify/sound
   useEffect(() => {
     ensureGlobalCSS();
     try {
@@ -271,13 +291,24 @@ export default function UfficioPage() {
     }
   }, []);
 
+  // aggiorna refs
   useEffect(() => {
+    notifyEnabledRef.current = notifyEnabled;
+    soundEnabledRef.current = soundEnabled;
+  }, [notifyEnabled, soundEnabled]);
+
+  // ✅ realtime STABILE + polling fallback
+  useEffect(() => {
+    let alive = true;
+    let cleanup: null | (() => void) = null;
+
     (async () => {
       setLoading(true);
       const ok = await fetchMeOrRedirect();
       if (!ok) return;
 
       await loadPickups();
+      if (!alive) return;
       setLoading(false);
 
       const ch = supabase
@@ -285,22 +316,47 @@ export default function UfficioPage() {
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "pickups" }, (payload) => {
           const p = payload.new as Pickup;
 
+          // evita doppio evento
           if (lastNotifiedIdRef.current === p.id) return;
           lastNotifiedIdRef.current = p.id;
 
-          playDing();
-          sendDesktopNotification(p);
+          // suono/notifica in base ai toggle (via ref)
+          if (soundEnabledRef.current) playDing();
+          if (notifyEnabledRef.current) sendDesktopNotification(p);
+
           loadPickups();
           showToast("Nuovo ordine ricevuto");
         })
-        .on("postgres_changes", { event: "*", schema: "public", table: "pickup_items" }, () => loadPickups())
-        .on("postgres_changes", { event: "UPDATE", schema: "public", table: "pickups" }, () => loadPickups())
+        .on("postgres_changes", { event: "UPDATE", schema: "public", table: "pickups" }, () => {
+          loadPickups();
+        })
+        .on("postgres_changes", { event: "*", schema: "public", table: "pickup_items" }, () => {
+          loadPickups();
+        })
         .subscribe();
 
-      return () => supabase.removeChannel(ch);
+      // fallback: polling leggero (tab in background / rete ballerina)
+      const t = window.setInterval(() => {
+        loadPickups();
+      }, 10000);
+
+      const onFocus = () => loadPickups();
+      window.addEventListener("focus", onFocus);
+
+      cleanup = () => {
+        window.clearInterval(t);
+        window.removeEventListener("focus", onFocus);
+        supabase.removeChannel(ch);
+      };
     })();
+
+    return () => {
+      alive = false;
+      if (cleanup) cleanup();
+    };
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [notifyEnabled, soundEnabled]);
+  }, []);
 
   if (loading) {
     return (
@@ -428,12 +484,19 @@ export default function UfficioPage() {
         </div>
       </section>
 
-      {/* ORDINI CHIUSI (COLLASSABILE) */}
+      {/* ORDINI CHIUSI */}
       <section style={ui.card}>
         <button
           type="button"
           onClick={() => setClosedOpen((v) => !v)}
-          style={{ width: "100%", textAlign: "left", padding: 0, border: "none", background: "transparent", cursor: "pointer" }}
+          style={{
+            width: "100%",
+            textAlign: "left",
+            padding: 0,
+            border: "none",
+            background: "transparent",
+            cursor: "pointer",
+          }}
         >
           <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
             <h2 style={{ margin: 0 }}>

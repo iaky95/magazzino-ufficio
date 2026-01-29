@@ -224,7 +224,8 @@ export default function MagazzinoPage() {
     const itemsPayload = cart.map((it) => ({
       pickup_id: p.id,
       name: it.name,
-      qty: it.qty, // ✅ decimale
+      qty: it.qty,
+      unit: it.unit ?? null, // ✅ aggiunto
       notes: "",
     }));
 

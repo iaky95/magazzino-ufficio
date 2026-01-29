@@ -22,6 +22,7 @@ type PickupItem = {
   pickup_id: string;
   name: string;
   qty: any; // numeric può arrivare anche come stringa in alcune config
+  unit: string | null; // ✅ aggiunto
   notes: string;
   created_at: string;
 };
@@ -457,7 +458,8 @@ export default function UfficioPage() {
               <ul style={{ margin: "10px 0 0 18px" }}>
                 {p.items.map((i) => (
                   <li key={i.id}>
-                    {formatQty(i.qty)}× {i.name}
+                    {formatQty(i.qty)}
+                    {i.unit ? ` ${i.unit}` : ""} × {i.name}
                     {i.notes ? ` — (${i.notes})` : ""}
                   </li>
                 ))}
@@ -539,7 +541,8 @@ export default function UfficioPage() {
                   <ul style={{ margin: "10px 0 0 18px" }}>
                     {p.items.map((i) => (
                       <li key={i.id}>
-                        {formatQty(i.qty)}× {i.name}
+                        {formatQty(i.qty)}
+                        {i.unit ? ` ${i.unit}` : ""} × {i.name}
                         {i.notes ? ` — (${i.notes})` : ""}
                       </li>
                     ))}

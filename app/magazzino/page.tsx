@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { supabase } from "@/lib/supabase";
 import { AppHeader } from "@/components/AppHeader";
@@ -66,6 +66,55 @@ function vibrate(ms = 12) {
   }
 }
 
+function normalizeText(s: string | null | undefined) {
+  return (s ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .trim();
+}
+
+function splitTerms(s: string) {
+  return normalizeText(s).split(/\s+/).filter(Boolean);
+}
+
+function startsWithWord(text: string, term: string) {
+  if (!term) return false;
+  return text.split(/\s+/).some((w) => w.startsWith(term));
+}
+
+function scoreMaterial(m: Material, rawSearch: string) {
+  const terms = splitTerms(rawSearch);
+  if (terms.length === 0) return 999;
+
+  const name = normalizeText(m.name);
+  const code = normalizeText(m.code);
+  const category = normalizeText(m.category);
+  const brand = normalizeText(m.brand);
+
+  const full = terms.join(" ");
+
+  const allInName = terms.every((t) => name.includes(t));
+  const allInCode = terms.every((t) => code.includes(t));
+  const allInCategory = terms.every((t) => category.includes(t));
+  const allInBrand = terms.every((t) => brand.includes(t));
+
+  if (name.startsWith(full)) return 0;
+  if (terms.every((t) => startsWithWord(name, t))) return 1;
+  if (allInName) return 2;
+
+  if (code.startsWith(full)) return 3;
+  if (allInCode) return 4;
+
+  if (category.startsWith(full)) return 5;
+  if (allInCategory) return 6;
+
+  if (brand.startsWith(full)) return 7;
+  if (allInBrand) return 8;
+
+  return 99;
+}
+
 export default function MagazzinoPage() {
   const [me, setMe] = useState<{ role: string; name: string }>({ role: "", name: "" });
   const [loading, setLoading] = useState(true);
@@ -75,22 +124,18 @@ export default function MagazzinoPage() {
   const [q, setQ] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("Tutte");
 
-  // quantità per riga materiale
   const [qtyById, setQtyById] = useState<Record<string, string>>({});
 
-  // ordine
   const [customer, setCustomer] = useState("");
   const [orderNotes, setOrderNotes] = useState("");
 
-  // carrello
   const [cart, setCart] = useState<CartItem[]>([]);
   const [cartOpen, setCartOpen] = useState(false);
 
-  // toast
   const [toast, setToast] = useState("");
   const toastTimerRef = useRef<number | null>(null);
 
-  const cartCount = useMemo(() => cart.length, [cart]);
+  const cartCount = cart.length;
 
   function showToast(msg: string) {
     setToast(msg);
@@ -117,7 +162,7 @@ export default function MagazzinoPage() {
       .select("id,name,code,category,brand,unit,active,created_at")
       .eq("active", true)
       .order("name", { ascending: true })
-      .limit(100);
+      .limit(150);
 
     const s = searchText.trim();
     if (s) {
@@ -138,7 +183,18 @@ export default function MagazzinoPage() {
       return;
     }
 
-    const list = (data ?? []) as Material[];
+    let list = (data ?? []) as Material[];
+
+    if (s) {
+      list = [...list].sort((a, b) => {
+        const sa = scoreMaterial(a, s);
+        const sb = scoreMaterial(b, s);
+        if (sa !== sb) return sa - sb;
+
+        return a.name.localeCompare(b.name, "it", { sensitivity: "base" });
+      });
+    }
+
     setMaterials(list);
 
     setQtyById((prev) => {
@@ -208,9 +264,7 @@ export default function MagazzinoPage() {
       return copy;
     });
 
-    // reset a 0 dopo aggiunta
     setRowQty(m.id, "0");
-
     vibrate(15);
     showToast("Aggiunto al carrello");
   }
@@ -319,7 +373,7 @@ export default function MagazzinoPage() {
   useEffect(() => {
     const t = setTimeout(() => {
       loadMaterials(q, selectedCategory);
-    }, 250);
+    }, 220);
 
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -339,7 +393,7 @@ export default function MagazzinoPage() {
 
       <AppHeader
         title="Magazzino"
-        subtitle="Ricerca materiali, quantità decimali e invio all’ufficio"
+        subtitle="Ricerca intelligente materiali, quantità decimali e invio all’ufficio"
         right={
           <div style={{ display: "flex", gap: 10 }}>
             <button className="desktopCartBtn" style={ui.btnSoft} onClick={() => setCartOpen(true)}>
@@ -477,14 +531,12 @@ export default function MagazzinoPage() {
         </div>
       </section>
 
-      {/* barra carrello in basso su mobile */}
       <div className="mobileCartBar" style={mobileBar}>
         <button style={{ ...ui.btn, padding: "12px 14px", width: "100%" }} onClick={() => setCartOpen(true)}>
           Apri carrello <span style={mobileBadge}>{cartCount}</span>
         </button>
       </div>
 
-      {/* modale carrello */}
       {cartOpen && (
         <div style={modalOverlay} onClick={() => setCartOpen(false)} role="dialog" aria-modal="true">
           <div style={modalCard} onClick={(e) => e.stopPropagation()}>

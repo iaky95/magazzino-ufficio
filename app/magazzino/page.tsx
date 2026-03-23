@@ -21,7 +21,7 @@ type CartItem = {
   material_id: string;
   name: string;
   unit: string | null;
-  qty: number; // ✅ decimale
+  qty: number;
 };
 
 function ensureMobileCartCSS() {
@@ -31,7 +31,6 @@ function ensureMobileCartCSS() {
   const style = document.createElement("style");
   style.id = "mobile-cart-style";
   style.innerHTML = `
-    /* spazio extra in fondo su mobile per non coprire contenuti */
     @media (max-width: 820px) {
       .mobileBottomPad { padding-bottom: 84px !important; }
       .desktopCartBtn { display: none !important; }
@@ -72,9 +71,11 @@ export default function MagazzinoPage() {
   const [loading, setLoading] = useState(true);
 
   const [materials, setMaterials] = useState<Material[]>([]);
+  const [categories, setCategories] = useState<string[]>([]);
   const [q, setQ] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState("Tutte");
 
-  // qty per riga materiale (string per decimali e virgole)
+  // quantità per riga materiale
   const [qtyById, setQtyById] = useState<Record<string, string>>({});
 
   // ordine
@@ -91,17 +92,6 @@ export default function MagazzinoPage() {
 
   const cartCount = useMemo(() => cart.length, [cart]);
 
-  const filteredMaterials = useMemo(() => {
-    const s = q.trim().toLowerCase();
-    const base = materials.filter((m) => m.active);
-    if (!s) return base;
-
-    return base.filter((m) => {
-      const hay = [m.name, m.code ?? "", m.category ?? "", m.brand ?? "", m.unit ?? ""].join(" ").toLowerCase();
-      return hay.includes(s);
-    });
-  }, [materials, q]);
-
   function showToast(msg: string) {
     setToast(msg);
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
@@ -111,20 +101,36 @@ export default function MagazzinoPage() {
   async function fetchMeOrRedirect() {
     const r = await fetch("/api/me", { cache: "no-store" });
     const j = await r.json().catch(() => ({ role: "", name: "" }));
+
     if (j.role !== "magazzino") {
       window.location.href = "/login";
       return null;
     }
+
     setMe({ role: j.role, name: j.name || "" });
     return j as { role: string; name: string };
   }
 
-  async function loadMaterials() {
-    const { data, error } = await supabase
+  async function loadMaterials(searchText = "", selectedCat = "Tutte") {
+    let query = supabase
       .from("materials")
       .select("id,name,code,category,brand,unit,active,created_at")
+      .eq("active", true)
       .order("name", { ascending: true })
-      .limit(800);
+      .limit(100);
+
+    const s = searchText.trim();
+    if (s) {
+      query = query.or(
+        `name.ilike.%${s}%,code.ilike.%${s}%,category.ilike.%${s}%,brand.ilike.%${s}%`
+      );
+    }
+
+    if (selectedCat && selectedCat !== "Tutte") {
+      query = query.eq("category", selectedCat);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       console.error(error);
@@ -135,7 +141,6 @@ export default function MagazzinoPage() {
     const list = (data ?? []) as Material[];
     setMaterials(list);
 
-    // ✅ default qty = "0"
     setQtyById((prev) => {
       const next = { ...prev };
       for (const m of list) {
@@ -143,6 +148,28 @@ export default function MagazzinoPage() {
       }
       return next;
     });
+  }
+
+  async function loadCategories() {
+    const { data, error } = await supabase
+      .from("materials")
+      .select("category")
+      .eq("active", true);
+
+    if (error) {
+      console.error(error);
+      return;
+    }
+
+    const cats = Array.from(
+      new Set(
+        (data ?? [])
+          .map((x: any) => x.category)
+          .filter((x: string | null) => !!x && x.trim() !== "")
+      )
+    ).sort() as string[];
+
+    setCategories(cats);
   }
 
   function setRowQty(materialId: string, value: string) {
@@ -162,14 +189,26 @@ export default function MagazzinoPage() {
     setCart((prev) => {
       const idx = prev.findIndex((x) => x.material_id === m.id);
       if (idx === -1) {
-        return [...prev, { material_id: m.id, name: m.name, unit: m.unit ?? null, qty: add }];
+        return [
+          ...prev,
+          {
+            material_id: m.id,
+            name: m.name,
+            unit: m.unit ?? null,
+            qty: add,
+          },
+        ];
       }
+
       const copy = [...prev];
-      copy[idx] = { ...copy[idx], qty: copy[idx].qty + add }; // ✅ somma decimali
+      copy[idx] = {
+        ...copy[idx],
+        qty: copy[idx].qty + add,
+      };
       return copy;
     });
 
-    // ✅ dopo aggiunta, reset qty a 0
+    // reset a 0 dopo aggiunta
     setRowQty(m.id, "0");
 
     vibrate(15);
@@ -191,11 +230,13 @@ export default function MagazzinoPage() {
 
   async function sendOrder() {
     const c = customer.trim();
+
     if (!c) {
       showToast("Inserisci il cliente");
       vibrate(20);
       return;
     }
+
     if (cart.length === 0) {
       showToast("Carrello vuoto");
       vibrate(20);
@@ -225,11 +266,12 @@ export default function MagazzinoPage() {
       pickup_id: p.id,
       name: it.name,
       qty: it.qty,
-      unit: it.unit ?? null, // ✅ aggiunto
+      unit: it.unit ?? null,
       notes: "",
     }));
 
     const { error: ei } = await supabase.from("pickup_items").insert(itemsPayload);
+
     if (ei) {
       console.error(ei);
       showToast("Errore righe ordine");
@@ -252,23 +294,36 @@ export default function MagazzinoPage() {
 
   useEffect(() => {
     ensureMobileCartCSS();
+
     (async () => {
       setLoading(true);
       const ok = await fetchMeOrRedirect();
       if (!ok) return;
 
-      await loadMaterials();
+      await Promise.all([loadMaterials("", "Tutte"), loadCategories()]);
       setLoading(false);
 
       const ch = supabase
         .channel("realtime-materials-magazzino")
-        .on("postgres_changes", { event: "*", schema: "public", table: "materials" }, () => loadMaterials())
+        .on("postgres_changes", { event: "*", schema: "public", table: "materials" }, () => {
+          loadMaterials(q, selectedCategory);
+          loadCategories();
+        })
         .subscribe();
 
       return () => supabase.removeChannel(ch);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      loadMaterials(q, selectedCategory);
+    }, 250);
+
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, selectedCategory]);
 
   if (loading) {
     return (
@@ -279,15 +334,14 @@ export default function MagazzinoPage() {
   }
 
   return (
-    <main style={{ ...ui.wrap }} className="mobileBottomPad">
+    <main style={ui.wrap} className="mobileBottomPad">
       {toast && <div style={toastStyle}>{toast}</div>}
 
       <AppHeader
         title="Magazzino"
-        subtitle="Seleziona materiali e invia all’ufficio"
+        subtitle="Ricerca materiali, quantità decimali e invio all’ufficio"
         right={
           <div style={{ display: "flex", gap: 10 }}>
-            {/* ✅ su desktop resta in alto */}
             <button className="desktopCartBtn" style={ui.btnSoft} onClick={() => setCartOpen(true)}>
               Carrello ({cartCount})
             </button>
@@ -330,19 +384,34 @@ export default function MagazzinoPage() {
         <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
           <h2 style={{ margin: 0 }}>Materiali</h2>
           <div style={{ color: "var(--muted)", fontSize: 13 }}>
-            Attivi: <b style={{ color: "var(--text)" }}>{materials.filter((m) => m.active).length}</b>
+            Risultati: <b style={{ color: "var(--text)" }}>{materials.length}</b>
           </div>
         </div>
 
-        <input
-          style={{ ...ui.inp, padding: "12px 14px", fontSize: 16, maxWidth: 560, marginTop: 10 }}
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Cerca per nome, codice, categoria, marca…"
-        />
+        <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
+          <input
+            style={{ ...ui.inp, padding: "12px 14px", fontSize: 16, maxWidth: 560 }}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Cerca per nome, codice, categoria, marca…"
+          />
+
+          <select
+            value={selectedCategory}
+            onChange={(e) => setSelectedCategory(e.target.value)}
+            style={{ ...ui.inp, padding: "12px 14px", fontSize: 16, maxWidth: 260 }}
+          >
+            <option value="Tutte">Tutte le categorie</option>
+            {categories.map((cat) => (
+              <option key={cat} value={cat}>
+                {cat}
+              </option>
+            ))}
+          </select>
+        </div>
 
         <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
-          {filteredMaterials.map((m) => (
+          {materials.map((m) => (
             <div
               key={m.id}
               style={{
@@ -404,21 +473,18 @@ export default function MagazzinoPage() {
             </div>
           ))}
 
-          {filteredMaterials.length === 0 && <div style={{ color: "var(--muted)" }}>Nessun materiale trovato.</div>}
+          {materials.length === 0 && <div style={{ color: "var(--muted)" }}>Nessun materiale trovato.</div>}
         </div>
       </section>
 
-      {/* ✅ Barra carrello in basso (solo mobile via CSS) */}
+      {/* barra carrello in basso su mobile */}
       <div className="mobileCartBar" style={mobileBar}>
         <button style={{ ...ui.btn, padding: "12px 14px", width: "100%" }} onClick={() => setCartOpen(true)}>
-          Apri carrello{" "}
-          <span style={mobileBadge}>
-            {cartCount}
-          </span>
+          Apri carrello <span style={mobileBadge}>{cartCount}</span>
         </button>
       </div>
 
-      {/* MODALE CARRELLO */}
+      {/* modale carrello */}
       {cartOpen && (
         <div style={modalOverlay} onClick={() => setCartOpen(false)} role="dialog" aria-modal="true">
           <div style={modalCard} onClick={(e) => e.stopPropagation()}>
@@ -546,7 +612,7 @@ const mobileBar: CSSProperties = {
   borderTop: "1px solid var(--border)",
   boxShadow: "0 -12px 30px rgba(2, 6, 23, 0.08)",
   zIndex: 9998,
-  display: "none", // mostrato da CSS su mobile
+  display: "none",
 };
 
 const mobileBadge: CSSProperties = {
